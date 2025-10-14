@@ -5,15 +5,14 @@ import { format, subDays } from 'date-fns'
 
 interface AlarmsProps {
   alertSummary: AlertSummary | null
+  alerts: Alert[]
   onAlertUpdate: () => void
 }
 
 // Temperature conversion helpers
 const cToF = (c: number): number => (c * 9/5) + 32
 
-export function Alarms({ alertSummary, onAlertUpdate }: AlarmsProps) {
-  const [alerts, setAlerts] = useState<Alert[]>([])
-  const [loading, setLoading] = useState(true)
+export function Alarms({ alertSummary, alerts, onAlertUpdate }: AlarmsProps) {
   const [message, setMessage] = useState('')
   const [showExportModal, setShowExportModal] = useState(false)
   const [units, setUnits] = useState<'C' | 'F'>('F')
@@ -35,31 +34,10 @@ export function Alarms({ alertSummary, onAlertUpdate }: AlarmsProps) {
     fetchSettings()
   }, [])
 
-  // Fetch alerts
-  useEffect(() => {
-    const fetchAlerts = async () => {
-      try {
-        setLoading(true)
-        const response = await apiClient.getAlerts({ active_only: true, limit: 50 })
-        setAlerts(response.alerts)
-      } catch (error) {
-        console.error('Failed to fetch alerts:', error)
-        setMessage(`Error loading alerts: ${error instanceof Error ? error.message : 'Unknown error'}`)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchAlerts()
-  }, [])
-
   const handleAcknowledge = async (alertId: number) => {
     try {
       await apiClient.acknowledgeAlert(alertId)
       setMessage('Alert acknowledged')
-      // Refresh alerts
-      const response = await apiClient.getAlerts({ active_only: true, limit: 50 })
-      setAlerts(response.alerts)
       onAlertUpdate()
     } catch (error) {
       setMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -70,9 +48,6 @@ export function Alarms({ alertSummary, onAlertUpdate }: AlarmsProps) {
     try {
       await apiClient.clearAlert(alertId)
       setMessage('Alert cleared')
-      // Refresh alerts
-      const response = await apiClient.getAlerts({ active_only: true, limit: 50 })
-      setAlerts(response.alerts)
       onAlertUpdate()
     } catch (error) {
       setMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -83,9 +58,6 @@ export function Alarms({ alertSummary, onAlertUpdate }: AlarmsProps) {
     try {
       const response = await apiClient.clearAllAlerts()
       setMessage(`Cleared ${response.cleared_count} alerts`)
-      // Refresh alerts
-      const alertsResponse = await apiClient.getAlerts({ active_only: true, limit: 50 })
-      setAlerts(alertsResponse.alerts)
       onAlertUpdate()
     } catch (error) {
       setMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -225,18 +197,6 @@ export function Alarms({ alertSummary, onAlertUpdate }: AlarmsProps) {
     return alert.message
   }
 
-  if (loading) {
-    return (
-      <div className="card">
-        <div className="flex items-center justify-center h-32">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mx-auto mb-2"></div>
-            <p className="text-gray-600">Loading alerts...</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="space-y-4">

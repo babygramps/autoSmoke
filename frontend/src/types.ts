@@ -70,6 +70,7 @@ export interface ControllerStatus {
   loop_count: number;
   last_loop_time: number | null;
   alert_summary: AlertSummary;
+  alerts: Alert[];
 }
 
 export interface Settings {

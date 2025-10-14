@@ -33,9 +33,6 @@ class SmokerController:
         self.control_tc_id = None  # ID of the control thermocouple
         self.tc_readings = {}  # Latest readings: {tc_id: (temp_c, fault)}
         
-        # Load thermocouples from database
-        self._load_thermocouples()
-        
         # Load settings from database (or use defaults)
         db_settings = self._load_db_settings()
         
@@ -59,6 +56,9 @@ class SmokerController:
         else:
             self.setpoint_c = settings.get_setpoint_celsius()
             self.setpoint_f = settings.get_setpoint_fahrenheit()
+        
+        # Load thermocouples from database (after setpoint is initialized)
+        self._load_thermocouples()
         
         self.current_temp_c = None
         self.current_temp_f = None
@@ -133,6 +133,10 @@ class SmokerController:
                     logger.warning(f"No control thermocouple specified, using first: {thermocouples[0].name}")
                 
                 logger.info(f"Loaded {len(thermocouples)} thermocouple(s)")
+                
+                # Update simulation sensors with current setpoint
+                if settings.smoker_sim_mode:
+                    self.tc_manager.update_setpoint(self.setpoint_c)
                 
         except Exception as e:
             logger.error(f"Failed to load thermocouples: {e}")
@@ -214,6 +218,9 @@ class SmokerController:
         # Update simulation sensor if in sim mode
         if isinstance(self.temp_sensor, SimTempSensor):
             self.temp_sensor.set_setpoint(self.setpoint_c)
+        
+        # Update all thermocouple simulation sensors
+        self.tc_manager.update_setpoint(self.setpoint_c)
         
         # Log setpoint change
         await self._log_event(

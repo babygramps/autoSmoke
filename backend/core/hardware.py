@@ -244,6 +244,11 @@ class MultiThermocoupleManager:
         if thermocouple_id in self.sim_temps:
             del self.sim_temps[thermocouple_id]
     
+    def update_setpoint(self, setpoint_c: float):
+        """Update setpoint for all simulation sensors."""
+        for sim_sensor in self.sim_temps.values():
+            sim_sensor.set_setpoint(setpoint_c)
+    
     async def read_all(self) -> Dict[int, Tuple[Optional[float], bool]]:
         """
         Read temperatures from all thermocouples.

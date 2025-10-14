@@ -93,8 +93,9 @@ class ConnectionManager:
                 # Get current controller status
                 status = controller.get_status()
                 
-                # Get alert summary
+                # Get alert summary and alerts
                 alert_summary = await alert_manager.get_alert_summary()
+                alerts = await alert_manager.get_active_alerts()
                 
                 # Create telemetry message
                 telemetry = {
@@ -115,7 +116,22 @@ class ConnectionManager:
                         "relay_state": status["relay_state"],
                         "loop_count": status["loop_count"],
                         "last_loop_time": status["last_loop_time"],
-                        "alert_summary": alert_summary
+                        "thermocouple_readings": status["thermocouple_readings"],
+                        "alert_summary": alert_summary,
+                        "alerts": [
+                            {
+                                "id": alert.id,
+                                "ts": alert.ts.isoformat() + 'Z' if not alert.ts.isoformat().endswith('Z') else alert.ts.isoformat(),
+                                "alert_type": alert.alert_type,
+                                "severity": alert.severity,
+                                "message": alert.message,
+                                "active": alert.active,
+                                "acknowledged": alert.acknowledged,
+                                "cleared_ts": (alert.cleared_ts.isoformat() + 'Z' if not alert.cleared_ts.isoformat().endswith('Z') else alert.cleared_ts.isoformat()) if alert.cleared_ts else None,
+                                "metadata": alert.meta_data
+                            }
+                            for alert in alerts
+                        ]
                     }
                 }
                 

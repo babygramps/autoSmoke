@@ -42,7 +42,7 @@
   }
   
   .card {
-    @apply bg-white rounded-lg shadow-md p-6;
+    @apply bg-white rounded-lg shadow-md p-3;
   }
   
   .badge {
