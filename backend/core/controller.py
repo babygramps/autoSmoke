@@ -301,6 +301,9 @@ class SmokerController:
         
         # Log reading to database
         await self._log_reading()
+        
+        # Check alerts
+        await alert_manager.check_alerts(self.get_status())
     
     async def _thermostat_control(self, temp_c: float):
         """

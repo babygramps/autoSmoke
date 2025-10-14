@@ -57,7 +57,16 @@ class AlertManager:
             return
         
         alert_key = "high_temp"
-        threshold = settings.smoker_hi_alarm_c
+        
+        # Get threshold from database settings
+        try:
+            from db.models import Settings as DBSettings
+            with get_session_sync() as session:
+                db_settings = session.get(DBSettings, 1)
+                threshold = db_settings.hi_alarm_c if db_settings else settings.smoker_hi_alarm_c
+        except Exception as e:
+            logger.error(f"Failed to load alarm threshold from DB: {e}")
+            threshold = settings.smoker_hi_alarm_c
         
         if temp_c >= threshold:
             if alert_key not in self.active_alerts:
@@ -78,7 +87,16 @@ class AlertManager:
             return
         
         alert_key = "low_temp"
-        threshold = settings.smoker_lo_alarm_c
+        
+        # Get threshold from database settings
+        try:
+            from db.models import Settings as DBSettings
+            with get_session_sync() as session:
+                db_settings = session.get(DBSettings, 1)
+                threshold = db_settings.lo_alarm_c if db_settings else settings.smoker_lo_alarm_c
+        except Exception as e:
+            logger.error(f"Failed to load alarm threshold from DB: {e}")
+            threshold = settings.smoker_lo_alarm_c
         
         if temp_c <= threshold:
             if alert_key not in self.active_alerts:
@@ -121,7 +139,17 @@ class AlertManager:
                 temp_rate = (recent_temps[-1] - recent_temps[0]) / len(recent_temps)  # °C per reading
                 temp_rate_per_min = temp_rate * 60  # Convert to °C per minute
                 
-                if temp_rate_per_min > settings.smoker_stuck_high_rate_c_per_min:
+                # Get threshold from database settings
+                try:
+                    from db.models import Settings as DBSettings
+                    with get_session_sync() as session:
+                        db_settings = session.get(DBSettings, 1)
+                        rate_threshold = db_settings.stuck_high_c if db_settings else settings.smoker_stuck_high_rate_c_per_min
+                except Exception as e:
+                    logger.error(f"Failed to load alarm threshold from DB: {e}")
+                    rate_threshold = settings.smoker_stuck_high_rate_c_per_min
+                
+                if temp_rate_per_min > rate_threshold:
                     if alert_key not in self.active_alerts:
                         await self._create_alert(
                             alert_key,
@@ -165,7 +193,7 @@ class AlertManager:
                     message=message,
                     active=True,
                     acknowledged=False,
-                    metadata=json.dumps(metadata)
+                    meta_data=json.dumps(metadata)
                 )
                 session.add(alert)
                 session.commit()
