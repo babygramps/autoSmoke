@@ -41,8 +41,8 @@ async def list_smokes(active_only: bool = False, limit: int = 50):
                         "id": smoke.id,
                         "name": smoke.name,
                         "description": smoke.description,
-                        "started_at": smoke.started_at.isoformat(),
-                        "ended_at": smoke.ended_at.isoformat() if smoke.ended_at else None,
+                        "started_at": smoke.started_at.isoformat() + 'Z' if not smoke.started_at.isoformat().endswith('Z') else smoke.started_at.isoformat(),
+                        "ended_at": (smoke.ended_at.isoformat() + 'Z' if not smoke.ended_at.isoformat().endswith('Z') else smoke.ended_at.isoformat()) if smoke.ended_at else None,
                         "is_active": smoke.is_active,
                         "total_duration_minutes": smoke.total_duration_minutes,
                         "avg_temp_f": smoke.avg_temp_f,
@@ -69,8 +69,8 @@ async def get_smoke(smoke_id: int):
                 "id": smoke.id,
                 "name": smoke.name,
                 "description": smoke.description,
-                "started_at": smoke.started_at.isoformat(),
-                "ended_at": smoke.ended_at.isoformat() if smoke.ended_at else None,
+                "started_at": smoke.started_at.isoformat() + 'Z' if not smoke.started_at.isoformat().endswith('Z') else smoke.started_at.isoformat(),
+                "ended_at": (smoke.ended_at.isoformat() + 'Z' if not smoke.ended_at.isoformat().endswith('Z') else smoke.ended_at.isoformat()) if smoke.ended_at else None,
                 "is_active": smoke.is_active,
                 "total_duration_minutes": smoke.total_duration_minutes,
                 "avg_temp_f": smoke.avg_temp_f,
@@ -118,7 +118,7 @@ async def create_smoke(smoke_create: SmokeCreate):
                     "id": smoke.id,
                     "name": smoke.name,
                     "description": smoke.description,
-                    "started_at": smoke.started_at.isoformat(),
+                    "started_at": smoke.started_at.isoformat() + 'Z' if not smoke.started_at.isoformat().endswith('Z') else smoke.started_at.isoformat(),
                     "is_active": smoke.is_active
                 }
             }
@@ -227,7 +227,7 @@ async def end_smoke(smoke_id: int):
                 "smoke": {
                     "id": smoke.id,
                     "name": smoke.name,
-                    "ended_at": smoke.ended_at.isoformat(),
+                    "ended_at": smoke.ended_at.isoformat() + 'Z' if not smoke.ended_at.isoformat().endswith('Z') else smoke.ended_at.isoformat(),
                     "total_duration_minutes": smoke.total_duration_minutes,
                     "avg_temp_f": smoke.avg_temp_f,
                     "min_temp_f": smoke.min_temp_f,

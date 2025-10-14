@@ -54,7 +54,7 @@ async def get_readings(
                 "readings": [
                     {
                         "id": r.id,
-                        "ts": r.ts.isoformat(),
+                        "ts": r.ts.isoformat() + 'Z' if not r.ts.isoformat().endswith('Z') else r.ts.isoformat(),
                         "smoke_id": r.smoke_id,
                         "temp_c": r.temp_c,
                         "temp_f": r.temp_f,
@@ -96,7 +96,7 @@ async def get_latest_reading(
             return {
                 "reading": {
                     "id": reading.id,
-                    "ts": reading.ts.isoformat(),
+                    "ts": reading.ts.isoformat() + 'Z' if not reading.ts.isoformat().endswith('Z') else reading.ts.isoformat(),
                     "temp_c": reading.temp_c,
                     "temp_f": reading.temp_f,
                     "setpoint_c": reading.setpoint_c,

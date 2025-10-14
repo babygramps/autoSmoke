@@ -32,13 +32,13 @@ async def get_alerts(
                 "alerts": [
                     {
                         "id": alert.id,
-                        "ts": alert.ts.isoformat(),
+                        "ts": alert.ts.isoformat() + 'Z' if not alert.ts.isoformat().endswith('Z') else alert.ts.isoformat(),
                         "alert_type": alert.alert_type,
                         "severity": alert.severity,
                         "message": alert.message,
                         "active": alert.active,
                         "acknowledged": alert.acknowledged,
-                        "cleared_ts": alert.cleared_ts.isoformat() if alert.cleared_ts else None,
+                        "cleared_ts": (alert.cleared_ts.isoformat() + 'Z' if not alert.cleared_ts.isoformat().endswith('Z') else alert.cleared_ts.isoformat()) if alert.cleared_ts else None,
                         "metadata": alert.meta_data
                     }
                     for alert in alerts

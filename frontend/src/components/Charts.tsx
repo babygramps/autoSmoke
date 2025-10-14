@@ -35,47 +35,104 @@ interface ChartsProps {
 export function Charts({ status, units, smokeId }: ChartsProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
+  const [timeRange, setTimeRange] = useState<number | null>(null) // null = all session data, or hours
   const chartRef = useRef<ChartJS<'line', number[], string>>(null)
+  const isMountedRef = useRef(true)
 
   // Fetch historical data
   useEffect(() => {
+    let cancelled = false
+    
     const fetchData = async () => {
       try {
         setLoading(true)
+        
         const endTime = new Date()
-        const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000) // 2 hours ago
-        
-        const response = await apiClient.getReadings({
-          smoke_id: smokeId,
-          from_time: startTime.toISOString(),
+        let params: any = {
           to_time: endTime.toISOString(),
-          limit: 7200, // 2 hours at 1Hz
-        })
+          limit: 10000, // Backend max limit
+        }
         
-        const data: ChartDataPoint[] = response.readings.map(reading => ({
-          timestamp: reading.ts,
-          temp_c: reading.temp_c,
-          temp_f: reading.temp_f,
-          setpoint_c: reading.setpoint_c,
-          setpoint_f: reading.setpoint_f,
-          relay_state: reading.relay_state,
-          pid_output: reading.pid_output,
-        }))
+        if (smokeId) {
+          // Filter by session
+          params.smoke_id = smokeId
+          
+          if (timeRange !== null) {
+            // User selected a specific time range
+            const startTime = new Date(endTime.getTime() - timeRange * 60 * 60 * 1000)
+            params.from_time = startTime.toISOString()
+          }
+          // If timeRange is null, don't set from_time to get ALL session data
+        } else {
+          // No session, default to last 2 hours
+          const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000)
+          params.from_time = startTime.toISOString()
+        }
         
-        setChartData(data)
+        const response = await apiClient.getReadings(params)
+        
+        // Only update if not cancelled
+        if (!cancelled && isMountedRef.current) {
+          const data: ChartDataPoint[] = response.readings.map(reading => ({
+            timestamp: reading.ts,
+            temp_c: reading.temp_c,
+            temp_f: reading.temp_f,
+            setpoint_c: reading.setpoint_c,
+            setpoint_f: reading.setpoint_f,
+            relay_state: reading.relay_state,
+            pid_output: reading.pid_output,
+          }))
+          
+          // Sort by timestamp to ensure chronological order
+          data.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+          
+          // Debug logging
+          if (data.length > 0) {
+            console.log('Chart data loaded:', {
+              count: data.length,
+              firstTimestamp: data[0].timestamp,
+              lastTimestamp: data[data.length - 1].timestamp,
+              smokeId: smokeId,
+              timeRange: timeRange,
+              params: params
+            })
+          }
+          
+          setChartData(data)
+          setLoading(false)
+        }
       } catch (error) {
-        console.error('Failed to fetch chart data:', error)
-      } finally {
-        setLoading(false)
+        if (!cancelled && isMountedRef.current) {
+          console.error('Failed to fetch chart data:', error)
+          setChartData([])
+          setLoading(false)
+        }
       }
     }
     
     fetchData()
-  }, [smokeId])
-
-  // Update chart with new data point
+    
+    // Cleanup function
+    return () => {
+      cancelled = true
+    }
+  }, [smokeId, timeRange])
+  
+  // Track mounted state
   useEffect(() => {
-    if (status && status.current_temp_f && chartRef.current) {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
+  // Update chart with new data point (only for live data, not when loading)
+  useEffect(() => {
+    // Don't add points while loading or if not mounted
+    if (loading || !isMountedRef.current) return
+    
+    // Only update if we have valid temperature data and the controller is running
+    if (status && status.current_temp_f !== null && status.current_temp_f !== undefined && status.running) {
       const newDataPoint: ChartDataPoint = {
         timestamp: new Date().toISOString(),
         temp_c: status.current_temp_c,
@@ -87,13 +144,33 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
       }
       
       setChartData(prev => {
+        // Avoid duplicates - check last point timestamp (within 1 second)
+        const lastPoint = prev[prev.length - 1]
+        if (lastPoint) {
+          const lastTime = new Date(lastPoint.timestamp).getTime()
+          const newTime = new Date(newDataPoint.timestamp).getTime()
+          if (Math.abs(newTime - lastTime) < 1000) {
+            return prev // Too close in time, skip
+          }
+        }
+        
         const updated = [...prev, newDataPoint]
-        // Keep only last 2 hours of data
-        const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000)
-        return updated.filter(point => new Date(point.timestamp) > cutoff)
+        
+        // Apply time filtering if specified
+        let filtered = updated
+        if (timeRange) {
+          const cutoff = new Date(Date.now() - timeRange * 60 * 60 * 1000)
+          filtered = updated.filter(point => new Date(point.timestamp) > cutoff)
+        }
+        // If showing all session data (timeRange === null), keep all points
+        
+        // Ensure data is sorted chronologically
+        filtered.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        
+        return filtered
       })
     }
-  }, [status])
+  }, [status, loading])
 
   // Calculate dynamic temperature scale based on actual data
   const calculateTempRange = () => {
@@ -239,8 +316,15 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         type: 'time' as const,
         time: {
           displayFormats: {
-            minute: 'HH:mm',
-            hour: 'HH:mm',
+            minute: 'h:mm a',
+            hour: 'h:mm a',
+          },
+          tooltipFormat: 'MMM d, h:mm a',
+        },
+        bounds: 'data' as const,
+        adapters: {
+          date: {
+            locale: undefined,
           },
         },
         title: {
@@ -257,6 +341,11 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         },
         ticks: {
           color: 'rgb(107, 114, 128)',
+          maxRotation: 45,
+          minRotation: 0,
+          autoSkip: true,
+          maxTicksLimit: 10,
+          source: 'data' as const,
         },
       },
       y: {
@@ -299,17 +388,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         },
       },
       title: {
-        display: true,
-        text: smokeId ? 'Temperature and Control History (Current Session)' : 'Temperature and Control History (Last 2 Hours)',
-        color: 'rgb(17, 24, 39)',
-        font: {
-          size: 16,
-          weight: 600,
-        },
-        padding: {
-          top: 10,
-          bottom: 20,
-        },
+        display: false,
       },
       tooltip: {
         backgroundColor: 'rgba(17, 24, 39, 0.95)',
@@ -364,6 +443,28 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
 
   return (
     <div className="card">
+      {/* Time Range Selector */}
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900">
+          Temperature and Control History {smokeId ? '(Current Session)' : ''}
+        </h3>
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-600">View:</label>
+          <select
+            value={timeRange === null ? 'all' : timeRange}
+            onChange={(e) => setTimeRange(e.target.value === 'all' ? null : Number(e.target.value))}
+            className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
+          >
+            {smokeId && <option value="all">All Session Data</option>}
+            <option value="1">Last 1 Hour</option>
+            <option value="2">Last 2 Hours</option>
+            <option value="4">Last 4 Hours</option>
+            <option value="8">Last 8 Hours</option>
+            <option value="24">Last 24 Hours</option>
+          </select>
+        </div>
+      </div>
+      
       <div className="h-96">
         <Line ref={chartRef} data={chartConfig} options={options} plugins={[heaterBackgroundPlugin]} />
       </div>

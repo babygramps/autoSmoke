@@ -9,6 +9,7 @@ from typing import Optional
 from core.config import settings, ControlMode
 from core.hardware import create_temp_sensor, create_relay_driver, SimTempSensor
 from core.pid import PIDController
+from core.alerts import alert_manager
 from db.models import Smoke, Reading, Event, Settings as DBSettings, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
 from db.session import get_session_sync
 

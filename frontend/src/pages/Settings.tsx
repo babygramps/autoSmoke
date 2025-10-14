@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react'
 import { apiClient } from '../api/client'
 import { Settings as SettingsType } from '../types'
 
+// Temperature conversion helpers
+const cToF = (c: number): number => (c * 9/5) + 32
+const fToC = (f: number): number => (f - 32) * 5/9
+
 export function Settings() {
   const [settings, setSettings] = useState<SettingsType | null>(null)
   const [loading, setLoading] = useState(true)
@@ -140,6 +144,9 @@ export function Settings() {
                 <option value="F">Fahrenheit (°F)</option>
                 <option value="C">Celsius (°C)</option>
               </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Temperature unit for display. All values will convert automatically when you switch units.
+              </p>
             </div>
 
             <div>
@@ -148,14 +155,29 @@ export function Settings() {
               </label>
               <input
                 type="number"
-                value={formData.setpoint_f || 225}
-                onChange={(e) => handleInputChange('setpoint_f', parseFloat(e.target.value))}
+                value={
+                  formData.units === 'C' 
+                    ? Math.round((formData.setpoint_c || 107.2) * 10) / 10
+                    : Math.round(formData.setpoint_f || 225)
+                }
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value)
+                  if (formData.units === 'C') {
+                    handleInputChange('setpoint_c', value)
+                    handleInputChange('setpoint_f', cToF(value))
+                  } else {
+                    handleInputChange('setpoint_f', value)
+                    handleInputChange('setpoint_c', fToC(value))
+                  }
+                }}
                 className="input"
-                min="100"
-                max="400"
-                step="1"
+                min={formData.units === 'C' ? '40' : '100'}
+                max={formData.units === 'C' ? '200' : '400'}
+                step={formData.units === 'C' ? '0.5' : '1'}
               />
-              <p className="text-xs text-gray-500 mt-1">Temperature in Fahrenheit</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Target temperature for smoking. This is the temperature the controller will try to maintain.
+              </p>
             </div>
           </div>
 
@@ -177,8 +199,8 @@ export function Settings() {
               </select>
               <p className="text-xs text-gray-500 mt-1">
                 {formData.control_mode === 'thermostat' 
-                  ? 'Simple on/off control with hysteresis - best for most smokers'
-                  : 'PID control with time-based duty cycle - more precise but complex'}
+                  ? 'Simple on/off control (like your home thermostat). Best for most smokers - reliable and easy to tune.'
+                  : 'Advanced PID control with duty cycle modulation. More precise temperature regulation but requires tuning.'}
               </p>
             </div>
 
@@ -199,6 +221,9 @@ export function Settings() {
                       max="60"
                       step="1"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Minimum time heater stays ON before turning off. Prevents rapid cycling and extends relay life.
+                    </p>
                   </div>
                   
                   <div>
@@ -214,23 +239,35 @@ export function Settings() {
                       max="60"
                       step="1"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Minimum time heater stays OFF before turning on again. Prevents rapid cycling.
+                    </p>
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Hysteresis (°C)
+                    Hysteresis ({formData.units === 'C' ? '°C' : '°F'})
                   </label>
                   <input
                     type="number"
-                    value={formData.hyst_c || 0.6}
-                    onChange={(e) => handleInputChange('hyst_c', parseFloat(e.target.value))}
+                    value={
+                      formData.units === 'C'
+                        ? Math.round((formData.hyst_c || 0.6) * 10) / 10
+                        : Math.round(cToF(formData.hyst_c || 0.6) * 10) / 10
+                    }
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value)
+                      handleInputChange('hyst_c', formData.units === 'C' ? value : fToC(value))
+                    }}
                     className="input"
                     min="0"
-                    max="5"
+                    max={formData.units === 'C' ? '5' : '10'}
                     step="0.1"
                   />
-                  <p className="text-xs text-gray-500 mt-1">Temperature deadband around setpoint</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Temperature deadband around setpoint. Heater turns ON when temp drops below (setpoint - hysteresis/2) and OFF when above (setpoint + hysteresis/2). Larger values reduce cycling frequency.
+                  </p>
                 </div>
               </>
             )}
@@ -252,6 +289,9 @@ export function Settings() {
                       max="100"
                       step="0.1"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Responds to current error. Higher = stronger response but may oscillate.
+                    </p>
                   </div>
                   
                   <div>
@@ -267,6 +307,9 @@ export function Settings() {
                       max="10"
                       step="0.01"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Eliminates steady-state error. Too high causes overshoot and instability.
+                    </p>
                   </div>
                   
                   <div>
@@ -282,6 +325,9 @@ export function Settings() {
                       max="100"
                       step="0.1"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Responds to rate of change. Helps prevent overshoot and improves stability.
+                    </p>
                   </div>
                 </div>
 
@@ -299,7 +345,7 @@ export function Settings() {
                     step="1"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Time window for duty cycle calculation (e.g., 60% PID output = 6s ON in 10s window)
+                    Time window for duty cycle control. Example: 60% PID output with 10s window = 6 seconds ON, 4 seconds OFF. Longer windows provide smoother control but slower response.
                   </p>
                 </div>
               </>
@@ -313,49 +359,80 @@ export function Settings() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  High Alarm (°C)
+                  High Alarm ({formData.units === 'C' ? '°C' : '°F'})
                 </label>
                 <input
                   type="number"
-                  value={formData.hi_alarm_c || 135.0}
-                  onChange={(e) => handleInputChange('hi_alarm_c', parseFloat(e.target.value))}
+                  value={
+                    formData.units === 'C'
+                      ? Math.round(formData.hi_alarm_c || 135.0)
+                      : Math.round(cToF(formData.hi_alarm_c || 135.0))
+                  }
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value)
+                    handleInputChange('hi_alarm_c', formData.units === 'C' ? value : fToC(value))
+                  }}
                   className="input"
-                  min="50"
-                  max="200"
+                  min={formData.units === 'C' ? '50' : '120'}
+                  max={formData.units === 'C' ? '200' : '400'}
                   step="1"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Alert triggers when temperature exceeds this threshold. Helps prevent overheating and fire hazards.
+                </p>
               </div>
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Low Alarm (°C)
+                  Low Alarm ({formData.units === 'C' ? '°C' : '°F'})
                 </label>
                 <input
                   type="number"
-                  value={formData.lo_alarm_c || 65.6}
-                  onChange={(e) => handleInputChange('lo_alarm_c', parseFloat(e.target.value))}
+                  value={
+                    formData.units === 'C'
+                      ? Math.round(formData.lo_alarm_c || 65.6)
+                      : Math.round(cToF(formData.lo_alarm_c || 65.6))
+                  }
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value)
+                    handleInputChange('lo_alarm_c', formData.units === 'C' ? value : fToC(value))
+                  }}
                   className="input"
-                  min="0"
-                  max="150"
+                  min={formData.units === 'C' ? '0' : '32'}
+                  max={formData.units === 'C' ? '150' : '300'}
                   step="1"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Alert triggers when temperature falls below this threshold. Warns you if your fire has gone out.
+                </p>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Stuck High Rate (°C/min)
+                  Stuck High Rate ({formData.units === 'C' ? '°C/min' : '°F/min'})
                 </label>
                 <input
                   type="number"
-                  value={formData.stuck_high_c || 2.0}
-                  onChange={(e) => handleInputChange('stuck_high_c', parseFloat(e.target.value))}
+                  value={
+                    formData.units === 'C'
+                      ? Math.round((formData.stuck_high_c || 2.0) * 10) / 10
+                      : Math.round((formData.stuck_high_c || 2.0) * 9/5 * 10) / 10
+                  }
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value)
+                    // For rates, we convert directly (not using fToC since it has +32 offset)
+                    handleInputChange('stuck_high_c', formData.units === 'C' ? value : value * 5/9)
+                  }}
                   className="input"
                   min="0"
-                  max="10"
+                  max={formData.units === 'C' ? '10' : '18'}
                   step="0.1"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Alert if temperature rises faster than this rate for the stuck high duration. Detects runaway temperature.
+                </p>
               </div>
               
               <div>
@@ -371,6 +448,9 @@ export function Settings() {
                   max="300"
                   step="10"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  How long temperature must rise at stuck high rate before triggering alert. Prevents false alarms during startup.
+                </p>
               </div>
             </div>
           </div>
@@ -389,7 +469,9 @@ export function Settings() {
                 />
                 <span className="text-sm font-medium text-gray-700">Simulation Mode</span>
               </label>
-              <p className="text-xs text-gray-500 mt-1">Enable for development without hardware</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Enable for testing without real hardware. Uses a software simulator that mimics temperature sensor and heater behavior.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -406,6 +488,9 @@ export function Settings() {
                   max="40"
                   step="1"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Raspberry Pi GPIO pin (BCM numbering) connected to relay controlling your heater. Default is GPIO 17.
+                </p>
               </div>
               
               <div>
@@ -418,6 +503,9 @@ export function Settings() {
                   />
                   <span className="text-sm font-medium text-gray-700">Relay Active High</span>
                 </label>
+                <p className="text-xs text-gray-500 mt-1">
+                  Enable if relay turns ON with high signal (3.3V). Disable if it turns ON with low signal (0V).
+                </p>
               </div>
             </div>
 
@@ -434,6 +522,9 @@ export function Settings() {
                 max="300"
                 step="10"
               />
+              <p className="text-xs text-gray-500 mt-1">
+                How long the heater runs at maximum when boost mode is activated. Useful for quickly recovering from temperature drops.
+              </p>
             </div>
 
             <div>
@@ -447,7 +538,9 @@ export function Settings() {
                 className="input"
                 placeholder="https://example.com/webhook"
               />
-              <p className="text-xs text-gray-500 mt-1">Optional webhook for alert notifications</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Optional HTTP endpoint to receive alert notifications. Useful for integrating with Discord, Slack, or custom systems.
+              </p>
             </div>
           </div>
         </div>
