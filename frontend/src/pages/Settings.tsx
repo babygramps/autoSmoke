@@ -20,6 +20,8 @@ export function Settings() {
   const [showAddTC, setShowAddTC] = useState(false)
   const [newTC, setNewTC] = useState<Partial<ThermocoupleCreate>>({ name: '', cs_pin: 8, enabled: true, color: '#ef4444' })
   const [editingTC, setEditingTC] = useState<number | null>(null)
+  const [editingName, setEditingName] = useState<number | null>(null)
+  const [tempName, setTempName] = useState('')
   const [tcMessage, setTcMessage] = useState('')
 
   useEffect(() => {
@@ -135,6 +137,40 @@ export function Settings() {
       setTimeout(() => setTcMessage(''), 3000)
     } catch (error) {
       setTcMessage(`Error deleting thermocouple: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleStartEditName = (tc: Thermocouple) => {
+    setEditingName(tc.id)
+    setTempName(tc.name)
+  }
+
+  const handleSaveName = async (id: number) => {
+    if (!tempName.trim()) {
+      setTcMessage('Name cannot be empty')
+      setEditingName(null)
+      return
+    }
+    try {
+      await apiClient.updateThermocouple(id, { name: tempName.trim() })
+      const updatedList = await apiClient.getThermocouples()
+      setThermocouples(updatedList.thermocouples.sort((a, b) => a.order - b.order))
+      setEditingName(null)
+    } catch (error) {
+      setTcMessage(`Error updating name: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleCancelEditName = () => {
+    setEditingName(null)
+    setTempName('')
+  }
+
+  const handleNameKeyDown = (e: React.KeyboardEvent, id: number) => {
+    if (e.key === 'Enter') {
+      handleSaveName(id)
+    } else if (e.key === 'Escape') {
+      handleCancelEditName()
     }
   }
 
@@ -683,99 +719,159 @@ export function Settings() {
           {thermocouples.map((tc) => (
             <div
               key={tc.id}
-              className={`p-4 rounded-lg border-2 ${
-                tc.is_control ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white'
+              className={`p-4 rounded-lg border-2 transition-all ${
+                tc.is_control ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white hover:border-gray-300'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3 flex-1">
-                  <div
-                    className="w-6 h-6 rounded-full border-2 border-gray-300"
-                    style={{ backgroundColor: tc.color }}
+              <div className="flex items-center justify-between gap-4">
+                {/* Color indicator */}
+                <div className="flex items-center space-x-3 flex-1 min-w-0">
+                  <input
+                    type="color"
+                    value={tc.color}
+                    onChange={(e) => handleUpdateTC(tc.id, { color: e.target.value })}
+                    className="w-10 h-10 rounded cursor-pointer border-2 border-gray-300 hover:border-gray-400 transition-colors"
+                    title="Change color"
                   />
-                  {editingTC === tc.id ? (
-                    <div className="flex items-center space-x-2 flex-1">
-                      <input
-                        type="text"
-                        defaultValue={tc.name}
-                        onBlur={(e) => handleUpdateTC(tc.id, { name: e.target.value })}
-                        className="input text-sm flex-1"
-                      />
-                      <input
-                        type="number"
-                        defaultValue={tc.cs_pin}
-                        onBlur={(e) => handleUpdateTC(tc.id, { cs_pin: parseInt(e.target.value) })}
-                        className="input text-sm w-20"
-                        min="0"
-                        max="27"
-                      />
-                      <input
-                        type="color"
-                        defaultValue={tc.color}
-                        onChange={(e) => handleUpdateTC(tc.id, { color: e.target.value })}
-                        className="input h-8 w-16"
-                      />
-                    </div>
-                  ) : (
-                    <>
-                      <div>
-                        <div className="font-semibold text-gray-900">
-                          {tc.name}
+                  
+                  {/* Name - inline editing */}
+                  <div className="flex-1 min-w-0">
+                    {editingName === tc.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={tempName}
+                          onChange={(e) => setTempName(e.target.value)}
+                          onKeyDown={(e) => handleNameKeyDown(e, tc.id)}
+                          onBlur={() => handleSaveName(tc.id)}
+                          className="input text-base font-semibold flex-1 min-w-0"
+                          autoFocus
+                          placeholder="Thermocouple name"
+                        />
+                        <button
+                          onClick={() => handleSaveName(tc.id)}
+                          className="text-green-600 hover:text-green-700 p-1"
+                          title="Save"
+                        >
+                          ✓
+                        </button>
+                        <button
+                          onClick={handleCancelEditName}
+                          className="text-gray-500 hover:text-gray-600 p-1"
+                          title="Cancel"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        onClick={() => handleStartEditName(tc)}
+                        className="cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-gray-900 text-base group-hover:text-primary-600 transition-colors">
+                            {tc.name}
+                          </span>
+                          <span className="opacity-0 group-hover:opacity-100 text-gray-400 text-sm transition-opacity">
+                            ✏️
+                          </span>
                           {tc.is_control && (
-                            <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-primary-100 text-primary-800">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-primary-100 text-primary-800 font-medium">
                               CONTROL
                             </span>
                           )}
                         </div>
-                        <div className="text-sm text-gray-600">GPIO Pin: {tc.cs_pin}</div>
+                        <div className="text-sm text-gray-600 mt-0.5">GPIO Pin: {tc.cs_pin}</div>
                       </div>
-                    </>
-                  )}
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <label className="flex items-center">
+                {/* Actions */}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <label className="flex items-center cursor-pointer">
                     <input
                       type="checkbox"
                       checked={tc.enabled}
                       onChange={(e) => handleUpdateTC(tc.id, { enabled: e.target.checked })}
-                      className="mr-1"
+                      className="mr-2 cursor-pointer"
                     />
-                    <span className="text-sm text-gray-700">Enabled</span>
+                    <span className="text-sm text-gray-700 whitespace-nowrap">Enabled</span>
                   </label>
                   
                   {!tc.is_control && tc.enabled && (
                     <button
                       onClick={() => handleSetControl(tc.id)}
-                      className="btn btn-secondary text-xs px-2 py-1"
+                      className="btn btn-secondary text-xs px-3 py-1.5 whitespace-nowrap"
                     >
                       Set as Control
                     </button>
                   )}
                   
                   <button
-                    onClick={() => setEditingTC(editingTC === tc.id ? null : tc.id)}
-                    className="btn btn-secondary text-xs px-2 py-1"
-                  >
-                    {editingTC === tc.id ? 'Done' : 'Edit'}
-                  </button>
-                  
-                  <button
                     onClick={() => handleDeleteTC(tc.id)}
-                    className="btn btn-danger text-xs px-2 py-1"
+                    className="btn btn-danger text-xs px-3 py-1.5"
+                    title="Delete thermocouple"
                   >
-                    Delete
+                    🗑️
                   </button>
                 </div>
               </div>
+
+              {/* Advanced settings - expandable */}
+              {editingTC === tc.id && (
+                <div className="mt-3 pt-3 border-t border-gray-200">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">CS Pin (GPIO)</label>
+                      <input
+                        type="number"
+                        defaultValue={tc.cs_pin}
+                        onBlur={(e) => handleUpdateTC(tc.id, { cs_pin: parseInt(e.target.value) })}
+                        className="input text-sm w-full"
+                        min="0"
+                        max="27"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Display Order</label>
+                      <input
+                        type="number"
+                        defaultValue={tc.order}
+                        onBlur={(e) => handleUpdateTC(tc.id, { order: parseInt(e.target.value) })}
+                        className="input text-sm w-full"
+                        min="0"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {editingTC !== tc.id && (
+                <button
+                  onClick={() => setEditingTC(tc.id)}
+                  className="mt-2 text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  Advanced settings
+                </button>
+              )}
+              {editingTC === tc.id && (
+                <button
+                  onClick={() => setEditingTC(null)}
+                  className="mt-2 text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  Hide advanced settings
+                </button>
+              )}
             </div>
           ))}
         </div>
 
         <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
           <p className="text-sm text-blue-800">
-            <strong>Note:</strong> Each thermocouple must be connected to a unique CS (Chip Select) GPIO pin. 
-            The control thermocouple is used for PID temperature control. Changes require controller restart to take effect.
+            <strong>💡 Tips:</strong> Click on any thermocouple name to rename it. Click the color circle to change its display color. 
+            Each thermocouple must be connected to a unique CS (Chip Select) GPIO pin. 
+            The control thermocouple is used for PID temperature control.
           </p>
         </div>
       </div>
