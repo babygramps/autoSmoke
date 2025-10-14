@@ -5,7 +5,7 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Optional, Protocol
+from typing import Optional, Protocol, Dict, List, Tuple
 from core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -190,6 +190,135 @@ class SimRelayDriver:
     async def get_state(self) -> bool:
         """Get simulated relay state."""
         return self.current_state
+
+
+class MultiThermocoupleManager:
+    """Manages multiple MAX31855 thermocouple sensors."""
+    
+    def __init__(self, sim_mode: bool = False):
+        self.sim_mode = sim_mode
+        self.sensors: Dict[int, any] = {}  # thermocouple_id -> sensor object
+        self.sim_temps: Dict[int, SimTempSensor] = {}  # For simulation
+        logger.info(f"MultiThermocoupleManager initialized (sim_mode={sim_mode})")
+    
+    def add_thermocouple(self, thermocouple_id: int, cs_pin: int, name: str):
+        """Add a thermocouple to the manager."""
+        if self.sim_mode:
+            # Create a simulated sensor for this thermocouple
+            sim_sensor = SimTempSensor()
+            sim_sensor.current_temp = 20.0 + (thermocouple_id * 5)  # Offset temps for testing
+            self.sim_temps[thermocouple_id] = sim_sensor
+            logger.info(f"Added simulated thermocouple {name} (ID={thermocouple_id})")
+        else:
+            try:
+                import board
+                import digitalio
+                from adafruit_max31855 import MAX31855
+                
+                # Map CS pin to board pin
+                cs_board_pin = self._gpio_to_board_pin(cs_pin)
+                if cs_board_pin is None:
+                    logger.error(f"Invalid CS pin {cs_pin} for thermocouple {name}")
+                    return
+                
+                spi = board.SPI()
+                cs = digitalio.DigitalInOut(cs_board_pin)
+                sensor = MAX31855(spi, cs)
+                self.sensors[thermocouple_id] = sensor
+                logger.info(f"Added MAX31855 thermocouple {name} (ID={thermocouple_id}, CS pin={cs_pin})")
+                
+            except ImportError as e:
+                logger.error(f"Required libraries not available for thermocouple {name}: {e}")
+                # Fall back to simulation for this sensor
+                sim_sensor = SimTempSensor()
+                self.sim_temps[thermocouple_id] = sim_sensor
+            except Exception as e:
+                logger.error(f"Failed to initialize thermocouple {name}: {e}")
+                sim_sensor = SimTempSensor()
+                self.sim_temps[thermocouple_id] = sim_sensor
+    
+    def remove_thermocouple(self, thermocouple_id: int):
+        """Remove a thermocouple from the manager."""
+        if thermocouple_id in self.sensors:
+            del self.sensors[thermocouple_id]
+        if thermocouple_id in self.sim_temps:
+            del self.sim_temps[thermocouple_id]
+    
+    async def read_all(self) -> Dict[int, Tuple[Optional[float], bool]]:
+        """
+        Read temperatures from all thermocouples.
+        Returns: Dict[thermocouple_id] -> (temp_c, fault)
+        """
+        results = {}
+        
+        if self.sim_mode or self.sim_temps:
+            # Read from simulated sensors
+            for tc_id, sim_sensor in self.sim_temps.items():
+                temp_c = await sim_sensor.read_temperature()
+                results[tc_id] = (temp_c, False)  # No faults in simulation
+        
+        # Read from real sensors
+        for tc_id, sensor in self.sensors.items():
+            try:
+                temp_c = sensor.temperature
+                fault = False
+                
+                # Check for invalid readings
+                if temp_c is None or temp_c == float('inf') or temp_c == float('-inf'):
+                    logger.warning(f"Invalid temperature reading from thermocouple ID {tc_id}")
+                    temp_c = None
+                    fault = True
+                
+                results[tc_id] = (temp_c, fault)
+            except Exception as e:
+                logger.error(f"Error reading thermocouple ID {tc_id}: {e}")
+                results[tc_id] = (None, True)
+        
+        return results
+    
+    async def read_single(self, thermocouple_id: int) -> Tuple[Optional[float], bool]:
+        """Read temperature from a single thermocouple. Returns (temp_c, fault)."""
+        if thermocouple_id in self.sim_temps:
+            temp_c = await self.sim_temps[thermocouple_id].read_temperature()
+            return (temp_c, False)
+        
+        if thermocouple_id in self.sensors:
+            try:
+                sensor = self.sensors[thermocouple_id]
+                temp_c = sensor.temperature
+                fault = False
+                
+                if temp_c is None or temp_c == float('inf') or temp_c == float('-inf'):
+                    logger.warning(f"Invalid temperature reading from thermocouple ID {thermocouple_id}")
+                    return (None, True)
+                
+                return (temp_c, fault)
+            except Exception as e:
+                logger.error(f"Error reading thermocouple ID {thermocouple_id}: {e}")
+                return (None, True)
+        
+        logger.warning(f"Thermocouple ID {thermocouple_id} not found")
+        return (None, True)
+    
+    def _gpio_to_board_pin(self, gpio_num: int):
+        """Map GPIO number to board pin. Returns board.D<num> or None."""
+        try:
+            import board
+            # Common GPIO to board pin mappings for Raspberry Pi
+            gpio_map = {
+                5: board.D5,   # CE1
+                8: board.D8,   # CE0
+                7: board.D7,   # GPIO7
+                24: board.D24, # GPIO24
+                25: board.D25, # GPIO25
+                22: board.D22, # GPIO22
+                23: board.D23, # GPIO23
+                17: board.D17, # GPIO17
+                27: board.D27, # GPIO27
+            }
+            return gpio_map.get(gpio_num)
+        except ImportError:
+            return None
 
 
 def create_temp_sensor() -> TempSensor:

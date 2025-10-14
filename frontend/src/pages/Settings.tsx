@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { apiClient } from '../api/client'
-import { Settings as SettingsType } from '../types'
+import { Settings as SettingsType, Thermocouple, ThermocoupleCreate } from '../types'
 
 // Temperature conversion helpers
 const cToF = (c: number): number => (c * 9/5) + 32
@@ -15,13 +15,24 @@ export function Settings() {
   // Form state
   const [formData, setFormData] = useState<Partial<SettingsType>>({})
 
+  // Thermocouple state
+  const [thermocouples, setThermocouples] = useState<Thermocouple[]>([])
+  const [showAddTC, setShowAddTC] = useState(false)
+  const [newTC, setNewTC] = useState<Partial<ThermocoupleCreate>>({ name: '', cs_pin: 8, enabled: true, color: '#ef4444' })
+  const [editingTC, setEditingTC] = useState<number | null>(null)
+  const [tcMessage, setTcMessage] = useState('')
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
         setLoading(true)
-        const data = await apiClient.getSettings()
-        setSettings(data)
-        setFormData(data)
+        const [settingsData, thermocouplesData] = await Promise.all([
+          apiClient.getSettings(),
+          apiClient.getThermocouples()
+        ])
+        setSettings(settingsData)
+        setFormData(settingsData)
+        setThermocouples(thermocouplesData.thermocouples.sort((a, b) => a.order - b.order))
       } catch (error) {
         setMessage(`Error loading settings: ${error instanceof Error ? error.message : 'Unknown error'}`)
       } finally {
@@ -67,6 +78,63 @@ export function Settings() {
       setMessage(`Error resetting settings: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Thermocouple handlers
+  const handleAddTC = async () => {
+    if (!newTC.name || newTC.cs_pin === undefined) {
+      setTcMessage('Please enter a name and CS pin')
+      return
+    }
+    try {
+      await apiClient.createThermocouple(newTC as ThermocoupleCreate)
+      const updatedList = await apiClient.getThermocouples()
+      setThermocouples(updatedList.thermocouples.sort((a, b) => a.order - b.order))
+      setNewTC({ name: '', cs_pin: 8, enabled: true, color: '#ef4444' })
+      setShowAddTC(false)
+      setTcMessage('Thermocouple added successfully')
+      setTimeout(() => setTcMessage(''), 3000)
+    } catch (error) {
+      setTcMessage(`Error adding thermocouple: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleUpdateTC = async (id: number, updates: Partial<Thermocouple>) => {
+    try {
+      await apiClient.updateThermocouple(id, updates)
+      const updatedList = await apiClient.getThermocouples()
+      setThermocouples(updatedList.thermocouples.sort((a, b) => a.order - b.order))
+      setEditingTC(null)
+      setTcMessage('Thermocouple updated successfully')
+      setTimeout(() => setTcMessage(''), 3000)
+    } catch (error) {
+      setTcMessage(`Error updating thermocouple: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleSetControl = async (id: number) => {
+    try {
+      await apiClient.setControlThermocouple(id)
+      const updatedList = await apiClient.getThermocouples()
+      setThermocouples(updatedList.thermocouples.sort((a, b) => a.order - b.order))
+      setTcMessage('Control thermocouple updated')
+      setTimeout(() => setTcMessage(''), 3000)
+    } catch (error) {
+      setTcMessage(`Error setting control thermocouple: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleDeleteTC = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this thermocouple?')) return
+    try {
+      await apiClient.deleteThermocouple(id)
+      const updatedList = await apiClient.getThermocouples()
+      setThermocouples(updatedList.thermocouples.sort((a, b) => a.order - b.order))
+      setTcMessage('Thermocouple deleted')
+      setTimeout(() => setTcMessage(''), 3000)
+    } catch (error) {
+      setTcMessage(`Error deleting thermocouple: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -543,6 +611,172 @@ export function Settings() {
               </p>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Thermocouple Configuration */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-semibold text-gray-900">🌡️ Thermocouple Configuration</h3>
+          <button
+            onClick={() => setShowAddTC(!showAddTC)}
+            className="btn btn-secondary text-sm"
+          >
+            {showAddTC ? 'Cancel' : '+ Add Thermocouple'}
+          </button>
+        </div>
+
+        {tcMessage && (
+          <div className={`mb-4 p-3 rounded ${
+            tcMessage.includes('Error') ? 'bg-danger-100 text-danger-800' : 'bg-success-100 text-success-800'
+          }`}>
+            {tcMessage}
+          </div>
+        )}
+
+        {/* Add Thermocouple Form */}
+        {showAddTC && (
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h4 className="font-semibold text-gray-900 mb-4">Add New Thermocouple</h4>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={newTC.name || ''}
+                  onChange={(e) => setNewTC({ ...newTC, name: e.target.value })}
+                  className="input"
+                  placeholder="e.g., Grate, Dome"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">CS Pin (GPIO)</label>
+                <input
+                  type="number"
+                  value={newTC.cs_pin || 8}
+                  onChange={(e) => setNewTC({ ...newTC, cs_pin: parseInt(e.target.value) })}
+                  className="input"
+                  min="0"
+                  max="27"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
+                <input
+                  type="color"
+                  value={newTC.color || '#ef4444'}
+                  onChange={(e) => setNewTC({ ...newTC, color: e.target.value })}
+                  className="input h-10"
+                />
+              </div>
+              <div className="flex items-end">
+                <button onClick={handleAddTC} className="btn btn-primary w-full">
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Thermocouples List */}
+        <div className="space-y-3">
+          {thermocouples.map((tc) => (
+            <div
+              key={tc.id}
+              className={`p-4 rounded-lg border-2 ${
+                tc.is_control ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3 flex-1">
+                  <div
+                    className="w-6 h-6 rounded-full border-2 border-gray-300"
+                    style={{ backgroundColor: tc.color }}
+                  />
+                  {editingTC === tc.id ? (
+                    <div className="flex items-center space-x-2 flex-1">
+                      <input
+                        type="text"
+                        defaultValue={tc.name}
+                        onBlur={(e) => handleUpdateTC(tc.id, { name: e.target.value })}
+                        className="input text-sm flex-1"
+                      />
+                      <input
+                        type="number"
+                        defaultValue={tc.cs_pin}
+                        onBlur={(e) => handleUpdateTC(tc.id, { cs_pin: parseInt(e.target.value) })}
+                        className="input text-sm w-20"
+                        min="0"
+                        max="27"
+                      />
+                      <input
+                        type="color"
+                        defaultValue={tc.color}
+                        onChange={(e) => handleUpdateTC(tc.id, { color: e.target.value })}
+                        className="input h-8 w-16"
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <div className="font-semibold text-gray-900">
+                          {tc.name}
+                          {tc.is_control && (
+                            <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-primary-100 text-primary-800">
+                              CONTROL
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-600">GPIO Pin: {tc.cs_pin}</div>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={tc.enabled}
+                      onChange={(e) => handleUpdateTC(tc.id, { enabled: e.target.checked })}
+                      className="mr-1"
+                    />
+                    <span className="text-sm text-gray-700">Enabled</span>
+                  </label>
+                  
+                  {!tc.is_control && tc.enabled && (
+                    <button
+                      onClick={() => handleSetControl(tc.id)}
+                      className="btn btn-secondary text-xs px-2 py-1"
+                    >
+                      Set as Control
+                    </button>
+                  )}
+                  
+                  <button
+                    onClick={() => setEditingTC(editingTC === tc.id ? null : tc.id)}
+                    className="btn btn-secondary text-xs px-2 py-1"
+                  >
+                    {editingTC === tc.id ? 'Done' : 'Edit'}
+                  </button>
+                  
+                  <button
+                    onClick={() => handleDeleteTC(tc.id)}
+                    className="btn btn-danger text-xs px-2 py-1"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-800">
+            <strong>Note:</strong> Each thermocouple must be connected to a unique CS (Chip Select) GPIO pin. 
+            The control thermocouple is used for PID temperature control. Changes require controller restart to take effect.
+          </p>
         </div>
       </div>
     </div>

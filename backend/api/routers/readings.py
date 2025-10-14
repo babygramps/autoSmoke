@@ -1,11 +1,11 @@
 """Readings API endpoints."""
 
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict
 from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import select, and_, desc
 
-from db.models import Reading
+from db.models import Reading, ThermocoupleReading, Thermocouple
 from db.session import get_session_sync
 from core.controller import controller
 
@@ -17,7 +17,8 @@ async def get_readings(
     smoke_id: Optional[int] = Query(None, description="Filter by smoke session ID"),
     from_time: Optional[str] = Query(None, description="Start time (ISO format)"),
     to_time: Optional[str] = Query(None, description="End time (ISO format)"),
-    limit: int = Query(1000, description="Maximum number of readings", le=10000)
+    limit: int = Query(1000, description="Maximum number of readings", le=10000),
+    include_thermocouples: bool = Query(False, description="Include individual thermocouple readings")
 ):
     """Get temperature readings with optional filtering."""
     try:
@@ -50,24 +51,44 @@ async def get_readings(
             # Execute query
             readings = session.exec(query).all()
             
+            # Optionally fetch thermocouple readings for each reading
+            result_readings = []
+            for r in readings:
+                reading_dict = {
+                    "id": r.id,
+                    "ts": r.ts.isoformat() + 'Z' if not r.ts.isoformat().endswith('Z') else r.ts.isoformat(),
+                    "smoke_id": r.smoke_id,
+                    "temp_c": r.temp_c,
+                    "temp_f": r.temp_f,
+                    "setpoint_c": r.setpoint_c,
+                    "setpoint_f": r.setpoint_f,
+                    "output_bool": r.output_bool,
+                    "relay_state": r.relay_state,
+                    "loop_ms": r.loop_ms,
+                    "pid_output": r.pid_output,
+                    "boost_active": r.boost_active
+                }
+                
+                if include_thermocouples:
+                    # Fetch thermocouple readings for this reading
+                    tc_query = select(ThermocoupleReading).where(ThermocoupleReading.reading_id == r.id)
+                    tc_readings = session.exec(tc_query).all()
+                    
+                    # Build dict of thermocouple_id -> reading data
+                    tc_data: Dict[int, Dict] = {}
+                    for tc_reading in tc_readings:
+                        tc_data[tc_reading.thermocouple_id] = {
+                            "temp_c": tc_reading.temp_c,
+                            "temp_f": tc_reading.temp_f,
+                            "fault": tc_reading.fault
+                        }
+                    
+                    reading_dict["thermocouple_readings"] = tc_data
+                
+                result_readings.append(reading_dict)
+            
             return {
-                "readings": [
-                    {
-                        "id": r.id,
-                        "ts": r.ts.isoformat() + 'Z' if not r.ts.isoformat().endswith('Z') else r.ts.isoformat(),
-                        "smoke_id": r.smoke_id,
-                        "temp_c": r.temp_c,
-                        "temp_f": r.temp_f,
-                        "setpoint_c": r.setpoint_c,
-                        "setpoint_f": r.setpoint_f,
-                        "output_bool": r.output_bool,
-                        "relay_state": r.relay_state,
-                        "loop_ms": r.loop_ms,
-                        "pid_output": r.pid_output,
-                        "boost_active": r.boost_active
-                    }
-                    for r in readings
-                ],
+                "readings": result_readings,
                 "count": len(readings),
                 "limit": limit
             }

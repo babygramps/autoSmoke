@@ -13,7 +13,7 @@ import {
 import { Line } from 'react-chartjs-2'
 import 'chartjs-adapter-date-fns'
 import { apiClient } from '../api/client'
-import { ChartDataPoint } from '../types'
+import { ChartDataPoint, Thermocouple } from '../types'
 
 ChartJS.register(
   CategoryScale,
@@ -36,8 +36,22 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [timeRange, setTimeRange] = useState<number | null>(null) // null = all session data, or hours
+  const [thermocouples, setThermocouples] = useState<Thermocouple[]>([])
   const chartRef = useRef<ChartJS<'line', number[], string>>(null)
   const isMountedRef = useRef(true)
+
+  // Fetch thermocouples on mount
+  useEffect(() => {
+    const fetchThermocouples = async () => {
+      try {
+        const response = await apiClient.getThermocouples()
+        setThermocouples(response.thermocouples.filter(tc => tc.enabled).sort((a, b) => a.order - b.order))
+      } catch (error) {
+        console.error('Failed to fetch thermocouples:', error)
+      }
+    }
+    fetchThermocouples()
+  }, [])
 
   // Fetch historical data
   useEffect(() => {
@@ -51,6 +65,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         let params: any = {
           to_time: endTime.toISOString(),
           limit: 10000, // Backend max limit
+          include_thermocouples: true, // Include thermocouple readings
         }
         
         if (smokeId) {
@@ -81,6 +96,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
             setpoint_f: reading.setpoint_f,
             relay_state: reading.relay_state,
             pid_output: reading.pid_output,
+            thermocouple_readings: reading.thermocouple_readings,
           }))
           
           // Sort by timestamp to ensure chronological order
@@ -141,6 +157,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         setpoint_f: status.setpoint_f,
         relay_state: status.relay_state,
         pid_output: status.pid_output,
+        thermocouple_readings: status.thermocouple_readings,
       }
       
       setChartData(prev => {
@@ -180,7 +197,20 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
     
     const temps = chartData.map(point => units === 'F' ? point.temp_f : point.temp_c)
     const setpoints = chartData.map(point => units === 'F' ? point.setpoint_f : point.setpoint_c)
-    const allValues = [...temps, ...setpoints].filter(v => v !== null && v !== undefined)
+    
+    // Also include all thermocouple readings
+    const tcTemps: number[] = []
+    chartData.forEach(point => {
+      if (point.thermocouple_readings) {
+        Object.values(point.thermocouple_readings).forEach(reading => {
+          if (reading && !reading.fault) {
+            tcTemps.push(units === 'F' ? reading.temp_f : reading.temp_c)
+          }
+        })
+      }
+    })
+    
+    const allValues = [...temps, ...setpoints, ...tcTemps].filter(v => v !== null && v !== undefined)
     
     if (allValues.length === 0) {
       return units === 'F' ? { min: 100, max: 300 } : { min: 40, max: 150 }
@@ -268,40 +298,60 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
     }
   }
 
-  const chartConfig = {
-    labels: chartData.map(point => point.timestamp),
-    datasets: [
-      {
-        label: `Temperature (${units})`,
-        data: chartData.map(point => units === 'F' ? point.temp_f : point.temp_c),
-        borderColor: 'rgb(239, 68, 68)',
-        backgroundColor: 'rgba(239, 68, 68, 0.05)',
-        borderWidth: 3,
+  // Build datasets dynamically based on available thermocouples
+  const buildDatasets = () => {
+    const datasets: any[] = []
+    
+    // Add a dataset for each thermocouple
+    thermocouples.forEach((tc) => {
+      const data = chartData.map(point => {
+        const reading = point.thermocouple_readings?.[tc.id]
+        if (!reading || reading.fault) return null
+        return units === 'F' ? reading.temp_f : reading.temp_c
+      })
+      
+      datasets.push({
+        label: `${tc.name} (${units})`,
+        data: data,
+        borderColor: tc.color,
+        backgroundColor: `${tc.color}20`, // Add transparency
+        borderWidth: tc.is_control ? 3 : 2, // Thicker line for control thermocouple
         tension: 0.4,
         pointRadius: 0,
         pointHoverRadius: 6,
         fill: false,
-      },
-      {
-        label: `Setpoint (${units})`,
-        data: chartData.map(point => units === 'F' ? point.setpoint_f : point.setpoint_c),
-        borderColor: 'rgb(59, 130, 246)',
-        backgroundColor: 'rgba(59, 130, 246, 0.05)',
-        borderDash: [10, 5],
-        borderWidth: 2,
-        tension: 0.4,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        fill: false,
-      },
-      {
-        // Hidden dataset to carry relay state for the background plugin
-        label: '__relay_state__',
-        data: chartData.map(point => point.relay_state ? 1 : 0),
-        hidden: true,
-        pointRadius: 0,
-      },
-    ],
+        spanGaps: true, // Connect line even if there are null values
+      })
+    })
+    
+    // Add setpoint line
+    datasets.push({
+      label: `Setpoint (${units})`,
+      data: chartData.map(point => units === 'F' ? point.setpoint_f : point.setpoint_c),
+      borderColor: 'rgb(59, 130, 246)',
+      backgroundColor: 'rgba(59, 130, 246, 0.05)',
+      borderDash: [10, 5],
+      borderWidth: 2,
+      tension: 0.4,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      fill: false,
+    })
+    
+    // Add hidden relay state dataset for the background plugin
+    datasets.push({
+      label: '__relay_state__',
+      data: chartData.map(point => point.relay_state ? 1 : 0),
+      hidden: true,
+      pointRadius: 0,
+    })
+    
+    return datasets
+  }
+
+  const chartConfig = {
+    labels: chartData.map(point => point.timestamp),
+    datasets: buildDatasets(),
   }
 
   const options = {

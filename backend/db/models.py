@@ -27,14 +27,28 @@ class Smoke(SQLModel, table=True):
     max_temp_f: Optional[float] = Field(default=None, description="Maximum temperature")
 
 
+class Thermocouple(SQLModel, table=True):
+    """Thermocouple configuration."""
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(description="User-friendly name for the thermocouple", index=True)
+    cs_pin: int = Field(description="GPIO pin for SPI CS (chip select)")
+    enabled: bool = Field(default=True, description="Whether this thermocouple is enabled")
+    is_control: bool = Field(default=False, description="Whether this is the control thermocouple for PID")
+    order: int = Field(default=0, description="Display order")
+    color: str = Field(default="#3b82f6", description="Display color (hex)")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Reading(SQLModel, table=True):
     """Temperature reading and control state at a point in time."""
     
     id: Optional[int] = Field(default=None, primary_key=True)
     ts: datetime = Field(default_factory=datetime.utcnow, index=True)
     smoke_id: Optional[int] = Field(default=None, foreign_key="smoke.id", index=True, description="Session this reading belongs to")
-    temp_c: float = Field(description="Temperature in Celsius")
-    temp_f: float = Field(description="Temperature in Fahrenheit")
+    temp_c: float = Field(description="Control temperature in Celsius")
+    temp_f: float = Field(description="Control temperature in Fahrenheit")
     setpoint_c: float = Field(description="Setpoint in Celsius")
     setpoint_f: float = Field(description="Setpoint in Fahrenheit")
     output_bool: bool = Field(description="PID output as boolean (relay should be on)")
@@ -42,6 +56,17 @@ class Reading(SQLModel, table=True):
     loop_ms: int = Field(description="Control loop execution time in milliseconds")
     pid_output: float = Field(description="Raw PID output (0-100%)")
     boost_active: bool = Field(default=False, description="Boost mode was active")
+
+
+class ThermocoupleReading(SQLModel, table=True):
+    """Individual thermocouple reading."""
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    reading_id: int = Field(foreign_key="reading.id", index=True, description="Parent reading")
+    thermocouple_id: int = Field(foreign_key="thermocouple.id", index=True, description="Which thermocouple")
+    temp_c: float = Field(description="Temperature in Celsius")
+    temp_f: float = Field(description="Temperature in Fahrenheit")
+    fault: bool = Field(default=False, description="Whether sensor reported a fault")
 
 
 class Alert(SQLModel, table=True):

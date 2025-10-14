@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from core.config import settings, ControlMode
-from core.hardware import create_temp_sensor, create_relay_driver, SimTempSensor
+from core.hardware import create_temp_sensor, create_relay_driver, SimTempSensor, MultiThermocoupleManager
 from core.pid import PIDController
 from core.alerts import alert_manager
-from db.models import Smoke, Reading, Event, Settings as DBSettings, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
+from db.models import Smoke, Reading, Event, Settings as DBSettings, Thermocouple, ThermocoupleReading, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
 from db.session import get_session_sync
 
 logger = logging.getLogger(__name__)
@@ -25,8 +25,16 @@ class SmokerController:
         self.boost_until = None
         
         # Hardware
-        self.temp_sensor = create_temp_sensor()
+        self.temp_sensor = create_temp_sensor()  # Kept for backward compatibility
         self.relay_driver = create_relay_driver()
+        
+        # Multi-thermocouple manager
+        self.tc_manager = MultiThermocoupleManager(sim_mode=settings.smoker_sim_mode)
+        self.control_tc_id = None  # ID of the control thermocouple
+        self.tc_readings = {}  # Latest readings: {tc_id: (temp_c, fault)}
+        
+        # Load thermocouples from database
+        self._load_thermocouples()
         
         # Load settings from database (or use defaults)
         db_settings = self._load_db_settings()
@@ -98,6 +106,43 @@ class SmokerController:
         except Exception as e:
             logger.warning(f"Failed to load database settings: {e}. Using config defaults.")
             return None
+    
+    def _load_thermocouples(self):
+        """Load thermocouple configurations from database and initialize hardware."""
+        try:
+            with get_session_sync() as session:
+                from sqlmodel import select
+                # Get all enabled thermocouples
+                statement = select(Thermocouple).where(Thermocouple.enabled == True).order_by(Thermocouple.order)
+                thermocouples = session.exec(statement).all()
+                
+                if not thermocouples:
+                    logger.warning("No thermocouples configured in database")
+                    return
+                
+                # Add each thermocouple to the manager
+                for tc in thermocouples:
+                    self.tc_manager.add_thermocouple(tc.id, tc.cs_pin, tc.name)
+                    if tc.is_control:
+                        self.control_tc_id = tc.id
+                        logger.info(f"Control thermocouple set to: {tc.name} (ID={tc.id})")
+                
+                if self.control_tc_id is None and thermocouples:
+                    # No control thermocouple set, use the first one
+                    self.control_tc_id = thermocouples[0].id
+                    logger.warning(f"No control thermocouple specified, using first: {thermocouples[0].name}")
+                
+                logger.info(f"Loaded {len(thermocouples)} thermocouple(s)")
+                
+        except Exception as e:
+            logger.error(f"Failed to load thermocouples: {e}")
+    
+    def reload_thermocouples(self):
+        """Reload thermocouple configuration (call after DB changes)."""
+        # Clear existing thermocouples
+        self.tc_readings = {}
+        # Reload from DB
+        self._load_thermocouples()
     
     def _load_active_smoke(self):
         """Load or create active smoking session."""
@@ -264,22 +309,30 @@ class SmokerController:
     
     async def _control_iteration(self):
         """Single control loop iteration."""
-        # Read temperature
-        temp_c = await self.temp_sensor.read_temperature()
+        # Read temperatures from all thermocouples
+        self.tc_readings = await self.tc_manager.read_all()
         
-        if temp_c is None:
-            # Sensor fault - turn off relay and log error
+        # Get control thermocouple temperature
+        control_temp_c = None
+        control_fault = True
+        
+        if self.control_tc_id and self.control_tc_id in self.tc_readings:
+            control_temp_c, control_fault = self.tc_readings[self.control_tc_id]
+        
+        if control_temp_c is None or control_fault:
+            # Control sensor fault - turn off relay and log error
             await self.relay_driver.set_state(False)
             self.relay_state = False
             self.output_bool = False
             
-            await self._log_event("sensor_fault", "Temperature sensor reading failed")
-            logger.error("Temperature sensor reading failed")
+            await self._log_event("sensor_fault", f"Control thermocouple reading failed (ID={self.control_tc_id})")
+            logger.error(f"Control thermocouple reading failed (ID={self.control_tc_id})")
             return
         
-        # Update temperature values
-        self.current_temp_c = temp_c
-        self.current_temp_f = settings.celsius_to_fahrenheit(temp_c)
+        # Update temperature values (for backward compatibility and status)
+        self.current_temp_c = control_temp_c
+        self.current_temp_f = settings.celsius_to_fahrenheit(control_temp_c)
+        temp_c = control_temp_c
         
         # Check if boost mode should end
         if self.boost_active and self.boost_until and datetime.utcnow() >= self.boost_until:
@@ -406,6 +459,22 @@ class SmokerController:
                 )
                 session.add(reading)
                 session.commit()
+                session.refresh(reading)  # Get the ID
+                
+                # Log all thermocouple readings
+                for tc_id, (temp_c, fault) in self.tc_readings.items():
+                    if temp_c is not None:
+                        temp_f = settings.celsius_to_fahrenheit(temp_c)
+                        tc_reading = ThermocoupleReading(
+                            reading_id=reading.id,
+                            thermocouple_id=tc_id,
+                            temp_c=temp_c,
+                            temp_f=temp_f,
+                            fault=fault
+                        )
+                        session.add(tc_reading)
+                
+                session.commit()
         except Exception as e:
             logger.error(f"Failed to log reading: {e}")
     
@@ -425,6 +494,16 @@ class SmokerController:
     
     def get_status(self) -> dict:
         """Get current controller status."""
+        # Build thermocouple readings for status
+        tc_temps = {}
+        for tc_id, (temp_c, fault) in self.tc_readings.items():
+            if temp_c is not None:
+                tc_temps[tc_id] = {
+                    "temp_c": temp_c,
+                    "temp_f": settings.celsius_to_fahrenheit(temp_c),
+                    "fault": fault
+                }
+        
         return {
             "running": self.running,
             "boost_active": self.boost_active,
@@ -440,7 +519,9 @@ class SmokerController:
             "relay_state": self.relay_state,
             "loop_count": self.loop_count,
             "last_loop_time": self.last_loop_time,
-            "pid_state": self.pid.get_state()
+            "pid_state": self.pid.get_state(),
+            "control_tc_id": self.control_tc_id,
+            "thermocouple_readings": tc_temps
         }
 
 

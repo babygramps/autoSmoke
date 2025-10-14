@@ -13,7 +13,10 @@ import {
   SettingsUpdate,
   Smoke,
   SmokeCreate,
-  SmokeUpdate
+  SmokeUpdate,
+  Thermocouple,
+  ThermocoupleCreate,
+  ThermocoupleUpdate
 } from '../types';
 
 const API_BASE = '/api';
@@ -81,12 +84,14 @@ class ApiClient {
     from_time?: string;
     to_time?: string;
     limit?: number;
+    include_thermocouples?: boolean;
   } = {}): Promise<{ readings: Reading[]; count: number; limit: number }> {
     const searchParams = new URLSearchParams();
     if (params.smoke_id !== undefined) searchParams.set('smoke_id', params.smoke_id.toString());
     if (params.from_time) searchParams.set('from_time', params.from_time);
     if (params.to_time) searchParams.set('to_time', params.to_time);
     if (params.limit) searchParams.set('limit', params.limit.toString());
+    if (params.include_thermocouples) searchParams.set('include_thermocouples', 'true');
     
     const query = searchParams.toString();
     return this.request(`/readings?${query}`);
@@ -212,6 +217,41 @@ class ApiClient {
       throw new Error(`Export failed: ${response.status}`);
     }
     return response.blob();
+  }
+
+  // Thermocouple endpoints
+  async getThermocouples(): Promise<{ thermocouples: Thermocouple[]; count: number }> {
+    return this.request('/thermocouples');
+  }
+
+  async getThermocouple(id: number): Promise<Thermocouple> {
+    return this.request(`/thermocouples/${id}`);
+  }
+
+  async createThermocouple(data: ThermocoupleCreate): Promise<{ status: string; message: string; thermocouple: Thermocouple }> {
+    return this.request('/thermocouples', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateThermocouple(id: number, data: ThermocoupleUpdate): Promise<{ status: string; message: string; thermocouple: Thermocouple }> {
+    return this.request(`/thermocouples/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteThermocouple(id: number): Promise<{ status: string; message: string }> {
+    return this.request(`/thermocouples/${id}`, { method: 'DELETE' });
+  }
+
+  async setControlThermocouple(id: number): Promise<{ status: string; message: string }> {
+    return this.request(`/thermocouples/${id}/set_control`, { method: 'POST' });
+  }
+
+  async readThermocoupleTemp(id: number): Promise<{ temp_c: number; temp_f: number; fault: boolean }> {
+    return this.request(`/thermocouples/${id}/read_temp`, { method: 'POST' });
   }
 }
 

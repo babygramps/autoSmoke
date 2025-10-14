@@ -28,6 +28,7 @@ export interface Reading {
   loop_ms: number;
   pid_output: number;
   boost_active: boolean;
+  thermocouple_readings?: Record<number, ThermocoupleReading>;
 }
 
 export interface Alert {
@@ -57,6 +58,8 @@ export interface ControllerStatus {
   boost_until: string | null;
   control_mode: ControlMode;
   active_smoke_id: number | null;
+  control_tc_id: number | null;
+  thermocouple_readings: Record<number, ThermocoupleReading>;
   current_temp_c: number | null;
   current_temp_f: number | null;
   setpoint_c: number;
@@ -108,6 +111,7 @@ export interface ChartDataPoint {
   setpoint_f: number;
   relay_state: boolean;
   pid_output: number;
+  thermocouple_readings?: Record<number, ThermocoupleReading>;
 }
 
 export interface ReadingStats {
@@ -178,4 +182,38 @@ export interface SmokeCreate {
 export interface SmokeUpdate {
   name?: string;
   description?: string;
+}
+
+// Thermocouple types
+export interface Thermocouple {
+  id: number;
+  name: string;
+  cs_pin: number;
+  enabled: boolean;
+  is_control: boolean;
+  order: number;
+  color: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ThermocoupleCreate {
+  name: string;
+  cs_pin: number;
+  enabled?: boolean;
+  color?: string;
+}
+
+export interface ThermocoupleUpdate {
+  name?: string;
+  cs_pin?: number;
+  enabled?: boolean;
+  order?: number;
+  color?: string;
+}
+
+export interface ThermocoupleReading {
+  temp_c: number;
+  temp_f: number;
+  fault: boolean;
 }

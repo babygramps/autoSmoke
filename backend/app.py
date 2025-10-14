@@ -50,13 +50,14 @@ app.add_middleware(
 )
 
 # Include API routers
-from api.routers import control, readings, settings as settings_router, alerts, export, smokes
+from api.routers import control, readings, settings as settings_router, alerts, export, smokes, thermocouples
 app.include_router(control.router, prefix="/api/control", tags=["control"])
 app.include_router(readings.router, prefix="/api/readings", tags=["readings"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
 app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
 app.include_router(export.router, prefix="/api/export", tags=["export"])
 app.include_router(smokes.router, prefix="/api/smokes", tags=["smokes"])
+app.include_router(thermocouples.router, prefix="/api/thermocouples", tags=["thermocouples"])
 
 # Include WebSocket router
 from ws.manager import router as ws_router
