@@ -1,0 +1,25 @@
+[Unit]
+Description=Smoker Controller
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/smoker/backend
+EnvironmentFile=/etc/smoker.env
+ExecStart=/usr/local/bin/poetry run uvicorn app:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/smoker /var/lib/smoker /var/log/smoker
+
+[Install]
+WantedBy=multi-user.target

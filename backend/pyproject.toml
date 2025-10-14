@@ -1,0 +1,52 @@
+[tool.poetry]
+name = "smoker-controller"
+version = "0.1.0"
+description = "Raspberry Pi smoker controller with web GUI"
+authors = ["Your Name <your.email@example.com>"]
+packages = []
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.104.1"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+sqlmodel = "^0.0.14"
+pydantic-settings = "^2.0.3"
+apscheduler = "^3.10.4"
+httpx = "^0.25.2"
+python-multipart = "^0.0.6"
+
+# Optional Raspberry Pi hardware dependencies
+adafruit-circuitpython-max31855 = {version = "^3.2.8", optional = true}
+RPi-GPIO = {version = "^0.7.1", optional = true}
+gpiozero = {version = "^2.0.1", optional = true}
+spidev = {version = "^3.6", optional = true}
+adafruit-blinka = {version = "^8.0.0", optional = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-asyncio = "^0.21.1"
+black = "^23.11.0"
+isort = "^5.12.0"
+mypy = "^1.7.1"
+
+[tool.poetry.extras]
+raspberry-pi = ["adafruit-circuitpython-max31855", "RPi-GPIO", "gpiozero", "spidev", "adafruit-blinka"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
