@@ -8,15 +8,32 @@ interface AlarmsProps {
   onAlertUpdate: () => void
 }
 
+// Temperature conversion helpers
+const cToF = (c: number): number => (c * 9/5) + 32
+
 export function Alarms({ alertSummary, onAlertUpdate }: AlarmsProps) {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [showExportModal, setShowExportModal] = useState(false)
+  const [units, setUnits] = useState<'C' | 'F'>('F')
   
   // Export date range state
   const [fromDate, setFromDate] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'))
   const [toDate, setToDate] = useState(format(new Date(), 'yyyy-MM-dd'))
+
+  // Fetch user settings for units
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const settings = await apiClient.getSettings()
+        setUnits(settings.units as 'C' | 'F')
+      } catch (error) {
+        console.error('Failed to fetch settings:', error)
+      }
+    }
+    fetchSettings()
+  }, [])
 
   // Fetch alerts
   useEffect(() => {
@@ -157,6 +174,57 @@ export function Alarms({ alertSummary, onAlertUpdate }: AlarmsProps) {
     }
   }
 
+  const formatAlertMessage = (alert: Alert): string => {
+    // Parse metadata
+    let metadata: any = {}
+    try {
+      if (alert.metadata) {
+        metadata = JSON.parse(alert.metadata)
+      }
+    } catch (error) {
+      console.error('Failed to parse alert metadata:', error)
+      return alert.message
+    }
+
+    // Format message based on alert type and user's units
+    const tempC = metadata.temp_c
+    const thresholdC = metadata.threshold
+    const rate = metadata.rate
+
+    if (alert.alert_type === 'high_temp' && tempC !== undefined && thresholdC !== undefined) {
+      if (units === 'F') {
+        const tempF = Math.round(cToF(tempC) * 10) / 10
+        const thresholdF = Math.round(cToF(thresholdC))
+        return `High temperature alert: ${tempF}°F (threshold: ${thresholdF}°F)`
+      } else {
+        return `High temperature alert: ${Math.round(tempC * 10) / 10}°C (threshold: ${Math.round(thresholdC)}°C)`
+      }
+    }
+
+    if (alert.alert_type === 'low_temp' && tempC !== undefined && thresholdC !== undefined) {
+      if (units === 'F') {
+        const tempF = Math.round(cToF(tempC) * 10) / 10
+        const thresholdF = Math.round(cToF(thresholdC))
+        return `Low temperature alert: ${tempF}°F (threshold: ${thresholdF}°F)`
+      } else {
+        return `Low temperature alert: ${Math.round(tempC * 10) / 10}°C (threshold: ${Math.round(thresholdC)}°C)`
+      }
+    }
+
+    if (alert.alert_type === 'stuck_high' && tempC !== undefined && rate !== undefined) {
+      if (units === 'F') {
+        const tempF = Math.round(cToF(tempC) * 10) / 10
+        const rateF = Math.round(rate * 9/5 * 10) / 10
+        return `Stuck high temperature: ${tempF}°F rising at ${rateF}°F/min (relay off)`
+      } else {
+        return `Stuck high temperature: ${Math.round(tempC * 10) / 10}°C rising at ${Math.round(rate * 10) / 10}°C/min (relay off)`
+      }
+    }
+
+    // For other alert types or if metadata is missing, return original message
+    return alert.message
+  }
+
   if (loading) {
     return (
       <div className="card">
@@ -253,7 +321,7 @@ export function Alarms({ alertSummary, onAlertUpdate }: AlarmsProps) {
                       )}
                     </div>
                     
-                    <p className="text-gray-800 mb-2">{alert.message}</p>
+                    <p className="text-gray-800 mb-2">{formatAlertMessage(alert)}</p>
                     
                     <div className="text-sm text-gray-500">
                       {new Date(alert.ts).toLocaleString()}
