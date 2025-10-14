@@ -18,7 +18,7 @@ class AlertManager:
     """Manages system alerts with debouncing and webhook notifications."""
     
     def __init__(self):
-        self.active_alerts: Dict[str, Alert] = {}
+        self.active_alerts: Dict[str, int] = {}  # alert_key -> alert_id
         self.alert_conditions: Dict[str, Dict] = {}
         self.webhook_client = httpx.AsyncClient(timeout=10.0)
         
@@ -197,24 +197,27 @@ class AlertManager:
                 )
                 session.add(alert)
                 session.commit()
+                session.refresh(alert)  # Ensure we have the ID
                 
-                # Store in active alerts
-                self.active_alerts[alert_key] = alert
+                alert_id = alert.id
+                
+                # Store alert ID in active alerts
+                self.active_alerts[alert_key] = alert_id
                 self.debounce_timers[alert_key] = datetime.utcnow()
                 
                 # Log event
                 event = Event(
                     kind="alert_created",
                     message=f"Alert created: {message}",
-                    meta_json=json.dumps({"alert_id": alert.id, "alert_type": alert_type})
+                    meta_json=json.dumps({"alert_id": alert_id, "alert_type": alert_type})
                 )
                 session.add(event)
                 session.commit()
                 
                 logger.warning(f"Alert created: {message}")
                 
-                # Send webhook if configured
-                await self._send_webhook(alert)
+                # Send webhook if configured (pass ID instead of object)
+                await self._send_webhook_by_id(alert_id)
                 
         except Exception as e:
             logger.error(f"Failed to create alert: {e}")
@@ -225,26 +228,27 @@ class AlertManager:
             return
         
         try:
-            alert = self.active_alerts[alert_key]
+            alert_id = self.active_alerts[alert_key]
             
             with get_session_sync() as session:
                 # Update alert in database
-                db_alert = session.get(Alert, alert.id)
+                db_alert = session.get(Alert, alert_id)
                 if db_alert:
+                    alert_type = db_alert.alert_type
                     db_alert.active = False
                     db_alert.cleared_ts = datetime.utcnow()
                     session.commit()
-                
-                # Log event
-                event = Event(
-                    kind="alert_cleared",
-                    message=f"Alert cleared: {clear_message}",
-                    meta_json=json.dumps({"alert_id": alert.id, "alert_type": alert.alert_type})
-                )
-                session.add(event)
-                session.commit()
-                
-                logger.info(f"Alert cleared: {clear_message}")
+                    
+                    # Log event
+                    event = Event(
+                        kind="alert_cleared",
+                        message=f"Alert cleared: {clear_message}",
+                        meta_json=json.dumps({"alert_id": alert_id, "alert_type": alert_type})
+                    )
+                    session.add(event)
+                    session.commit()
+                    
+                    logger.info(f"Alert cleared: {clear_message}")
                 
                 # Remove from active alerts
                 del self.active_alerts[alert_key]
@@ -290,8 +294,8 @@ class AlertManager:
                     session.commit()
                     
                     # Remove from active alerts if present
-                    for key, active_alert in list(self.active_alerts.items()):
-                        if active_alert.id == alert_id:
+                    for key, active_alert_id in list(self.active_alerts.items()):
+                        if active_alert_id == alert_id:
                             del self.active_alerts[key]
                             break
                     
@@ -336,8 +340,8 @@ class AlertManager:
         
         return summary
     
-    async def _send_webhook(self, alert: Alert):
-        """Send webhook notification for alert."""
+    async def _send_webhook_by_id(self, alert_id: int):
+        """Send webhook notification for alert by ID."""
         if not settings.smoker_webhook_url:
             return
         
@@ -349,14 +353,21 @@ class AlertManager:
             return
         
         try:
-            payload = {
-                "alert_id": alert.id,
-                "alert_type": alert.alert_type,
-                "severity": alert.severity,
-                "message": alert.message,
-                "timestamp": alert.ts.isoformat(),
-                "metadata": json.loads(alert.meta_data) if alert.meta_data else {}
-            }
+            # Fetch alert from database
+            with get_session_sync() as session:
+                alert = session.get(Alert, alert_id)
+                if not alert:
+                    logger.error(f"Alert {alert_id} not found for webhook")
+                    return
+                
+                payload = {
+                    "alert_id": alert.id,
+                    "alert_type": alert.alert_type,
+                    "severity": alert.severity,
+                    "message": alert.message,
+                    "timestamp": alert.ts.isoformat(),
+                    "metadata": json.loads(alert.meta_data) if alert.meta_data else {}
+                }
             
             response = await self.webhook_client.post(
                 settings.smoker_webhook_url,
@@ -365,7 +376,7 @@ class AlertManager:
             response.raise_for_status()
             
             self.last_webhook_time = now
-            logger.info(f"Webhook sent for alert {alert.id}")
+            logger.info(f"Webhook sent for alert {alert_id}")
             
         except Exception as e:
             logger.error(f"Failed to send webhook: {e}")
