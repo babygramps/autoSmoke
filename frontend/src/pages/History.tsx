@@ -1,7 +1,31 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { apiClient } from '../api/client'
-import { Reading, ReadingStats, Smoke } from '../types'
+import { Reading, ReadingStats, Smoke, Thermocouple } from '../types'
 import { format, subDays } from 'date-fns'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  TimeScale,
+} from 'chart.js'
+import { Line } from 'react-chartjs-2'
+import 'chartjs-adapter-date-fns'
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  TimeScale
+)
 
 export function History() {
   const [readings, setReadings] = useState<Reading[]>([])
@@ -10,6 +34,9 @@ export function History() {
   const [selectedSmoke, setSelectedSmoke] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
+  const [thermocouples, setThermocouples] = useState<Thermocouple[]>([])
+  const [units, setUnits] = useState<'F' | 'C'>('F')
+  const chartRef = useRef<ChartJS<'line', number[], string>>(null)
   
   // Date range state - default to last 24 hours
   const getDefaultDates = () => {
@@ -42,18 +69,33 @@ export function History() {
       const fromDateTime = new Date(`${fromDate}T${fromTime}:00`)
       const toDateTime = new Date(`${toDate}T${toTime}:00`)
       
+      console.log('Fetching history data:', {
+        fromDateTime: fromDateTime.toISOString(),
+        toDateTime: toDateTime.toISOString(),
+        selectedSmoke,
+        currentPage
+      })
+      
       const [readingsResponse, statsResponse] = await Promise.all([
         apiClient.getReadings({
           smoke_id: selectedSmoke || undefined,
           from_time: fromDateTime.toISOString(),
           to_time: toDateTime.toISOString(),
           limit: itemsPerPage * currentPage,
+          include_thermocouples: true, // Include thermocouple data for the chart
         }),
         apiClient.getReadingStats({ 
           smoke_id: selectedSmoke || undefined,
           hours: 24 
         })
       ])
+      
+      console.log('History data fetched:', {
+        readingsCount: readingsResponse.count,
+        readingsLength: readingsResponse.readings.length,
+        hasThermocoupleData: readingsResponse.readings.some(r => r.thermocouple_readings),
+        statsAvailable: !!statsResponse.stats
+      })
       
       setReadings(readingsResponse.readings)
       setStats(statsResponse)
@@ -66,6 +108,7 @@ export function History() {
         setMessage('No data found for this date range. Try selecting a different time period or use "Last 24 Hours".')
       }
     } catch (error) {
+      console.error('Error fetching history data:', error)
       setMessage(`Error loading data: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setLoading(false)
@@ -73,16 +116,29 @@ export function History() {
   }
 
   useEffect(() => {
-    // Fetch smoke sessions on mount
-    const fetchSmokes = async () => {
+    // Fetch smoke sessions, thermocouples, and settings on mount
+    const fetchInitialData = async () => {
       try {
-        const data = await apiClient.getSmokes({ limit: 50 })
-        setSmokes(data.smokes)
+        console.log('Fetching initial data for History page...')
+        const [smokesData, thermocoupleSata, settings] = await Promise.all([
+          apiClient.getSmokes({ limit: 50 }),
+          apiClient.getThermocouples(),
+          apiClient.getSettings(),
+        ])
+        const enabledThermocouples = thermocoupleSata.thermocouples.filter(tc => tc.enabled).sort((a, b) => a.order - b.order)
+        console.log('Initial data loaded:', {
+          smokesCount: smokesData.smokes.length,
+          thermocoplesCount: enabledThermocouples.length,
+          units: settings.units
+        })
+        setSmokes(smokesData.smokes)
+        setThermocouples(enabledThermocouples)
+        setUnits(settings.units)
       } catch (error) {
-        console.error('Failed to load smokes:', error)
+        console.error('Failed to load initial data:', error)
       }
     }
-    fetchSmokes()
+    fetchInitialData()
   }, [])
 
   useEffect(() => {
@@ -136,6 +192,295 @@ export function History() {
     setToTime(format(now, 'HH:mm'))
     setCurrentPage(1)
     setMessage('') // Clear any previous messages
+  }
+
+  // Chart helper functions
+  const calculateTempRange = () => {
+    if (readings.length === 0) {
+      return units === 'F' ? { min: 100, max: 300 } : { min: 40, max: 150 }
+    }
+    
+    const temps = readings.map(point => units === 'F' ? point.temp_f : point.temp_c)
+    const setpoints = readings.map(point => units === 'F' ? point.setpoint_f : point.setpoint_c)
+    
+    // Also include all thermocouple readings
+    const tcTemps: number[] = []
+    readings.forEach(point => {
+      if (point.thermocouple_readings) {
+        Object.values(point.thermocouple_readings).forEach(reading => {
+          if (reading && !reading.fault) {
+            tcTemps.push(units === 'F' ? reading.temp_f : reading.temp_c)
+          }
+        })
+      }
+    })
+    
+    const allValues = [...temps, ...setpoints, ...tcTemps].filter(v => v !== null && v !== undefined)
+    
+    if (allValues.length === 0) {
+      return units === 'F' ? { min: 100, max: 300 } : { min: 40, max: 150 }
+    }
+    
+    const minTemp = Math.min(...allValues)
+    const maxTemp = Math.max(...allValues)
+    
+    // Add 10% padding above and below for better visibility
+    const range = maxTemp - minTemp
+    const padding = Math.max(range * 0.15, units === 'F' ? 20 : 10) // At least 20°F or 10°C padding
+    
+    return {
+      min: Math.floor(minTemp - padding),
+      max: Math.ceil(maxTemp + padding)
+    }
+  }
+
+  // Custom plugin to draw heater ON periods as background shading
+  const heaterBackgroundPlugin = {
+    id: 'heaterBackground',
+    beforeDatasetsDraw: (chart: any) => {
+      const { ctx, chartArea, scales, data } = chart
+      if (!chartArea || !scales.x || !scales.y || !data.labels || data.labels.length === 0) return
+      
+      // Find the hidden relay state dataset
+      const relayDataset = data.datasets.find((ds: any) => ds.label === '__relay_state__')
+      if (!relayDataset || !relayDataset.data) return
+      
+      // Get heater ON periods from the relay state data
+      const periods: Array<{ start: string; end: string }> = []
+      let currentPeriodStart: string | null = null
+      
+      relayDataset.data.forEach((value: number, index: number) => {
+        const timestamp = data.labels[index]
+        
+        if (value === 1 && !currentPeriodStart) {
+          // Heater turned ON
+          currentPeriodStart = timestamp
+        } else if (value === 0 && currentPeriodStart) {
+          // Heater turned OFF
+          periods.push({
+            start: currentPeriodStart,
+            end: timestamp
+          })
+          currentPeriodStart = null
+        }
+      })
+      
+      // If heater is still on at the end
+      if (currentPeriodStart && data.labels.length > 0) {
+        periods.push({
+          start: currentPeriodStart,
+          end: data.labels[data.labels.length - 1]
+        })
+      }
+      
+      ctx.save()
+      
+      periods.forEach(period => {
+        const xStart = scales.x.getPixelForValue(new Date(period.start).getTime())
+        const xEnd = scales.x.getPixelForValue(new Date(period.end).getTime())
+        
+        // Draw semi-transparent green rectangle spanning the full chart height
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.15)' // Green with 15% opacity
+        ctx.fillRect(
+          xStart,
+          chartArea.top,
+          xEnd - xStart,
+          chartArea.bottom - chartArea.top
+        )
+        
+        // Add subtle left border to mark the start
+        ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(xStart, chartArea.top)
+        ctx.lineTo(xStart, chartArea.bottom)
+        ctx.stroke()
+      })
+      
+      ctx.restore()
+    }
+  }
+
+  // Build datasets dynamically based on available thermocouples
+  const buildDatasets = () => {
+    const datasets: any[] = []
+    
+    // Add a dataset for each thermocouple
+    thermocouples.forEach((tc) => {
+      const data = readings.map(point => {
+        const reading = point.thermocouple_readings?.[tc.id]
+        if (!reading || reading.fault) return null
+        return units === 'F' ? reading.temp_f : reading.temp_c
+      })
+      
+      datasets.push({
+        label: `${tc.name} (${units})`,
+        data: data,
+        borderColor: tc.color,
+        backgroundColor: `${tc.color}20`, // Add transparency
+        borderWidth: tc.is_control ? 3 : 2, // Thicker line for control thermocouple
+        tension: 0.4,
+        pointRadius: 0,
+        pointHoverRadius: 6,
+        fill: false,
+        spanGaps: true, // Connect line even if there are null values
+      })
+    })
+    
+    // Add setpoint line
+    datasets.push({
+      label: `Setpoint (${units})`,
+      data: readings.map(point => units === 'F' ? point.setpoint_f : point.setpoint_c),
+      borderColor: 'rgb(59, 130, 246)',
+      backgroundColor: 'rgba(59, 130, 246, 0.05)',
+      borderDash: [10, 5],
+      borderWidth: 2,
+      tension: 0.4,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      fill: false,
+    })
+    
+    // Add hidden relay state dataset for the background plugin
+    datasets.push({
+      label: '__relay_state__',
+      data: readings.map(point => point.relay_state ? 1 : 0),
+      hidden: true,
+      pointRadius: 0,
+    })
+    
+    return datasets
+  }
+
+  const tempRange = calculateTempRange()
+  const chartConfig = {
+    labels: readings.map(point => point.ts),
+    datasets: buildDatasets(),
+  }
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index' as const,
+      intersect: false,
+    },
+    scales: {
+      x: {
+        type: 'time' as const,
+        time: {
+          displayFormats: {
+            minute: 'h:mm a',
+            hour: 'h:mm a',
+          },
+          tooltipFormat: 'MMM d, h:mm a',
+        },
+        bounds: 'data' as const,
+        adapters: {
+          date: {
+            locale: undefined,
+          },
+        },
+        title: {
+          display: true,
+          text: 'Time',
+          color: 'rgb(107, 114, 128)',
+          font: {
+            size: 12,
+            weight: 500,
+          },
+        },
+        grid: {
+          color: 'rgba(0, 0, 0, 0.05)',
+        },
+        ticks: {
+          color: 'rgb(107, 114, 128)',
+          maxRotation: 45,
+          minRotation: 0,
+          autoSkip: true,
+          maxTicksLimit: 10,
+          source: 'data' as const,
+        },
+      },
+      y: {
+        type: 'linear' as const,
+        display: true,
+        position: 'left' as const,
+        title: {
+          display: true,
+          text: `Temperature (°${units})`,
+          color: 'rgb(55, 65, 81)',
+          font: {
+            size: 13,
+            weight: 600,
+          },
+        },
+        min: tempRange.min,
+        max: tempRange.max,
+        grid: {
+          color: 'rgba(0, 0, 0, 0.08)',
+        },
+        ticks: {
+          color: 'rgb(107, 114, 128)',
+          callback: function(value: any) {
+            return value.toFixed(0) + '°'
+          },
+        },
+      },
+    },
+    plugins: {
+      legend: {
+        position: 'top' as const,
+        labels: {
+          usePointStyle: true,
+          padding: 15,
+          font: {
+            size: 12,
+            weight: 500,
+          },
+          color: 'rgb(55, 65, 81)',
+        },
+      },
+      title: {
+        display: false,
+      },
+      tooltip: {
+        backgroundColor: 'rgba(17, 24, 39, 0.95)',
+        titleColor: 'rgb(255, 255, 255)',
+        bodyColor: 'rgb(229, 231, 235)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderWidth: 1,
+        padding: 12,
+        displayColors: true,
+        callbacks: {
+          title: (items: any) => {
+            if (items[0]) {
+              const date = new Date(items[0].parsed.x)
+              return date.toLocaleString()
+            }
+            return ''
+          },
+          label: (context: any) => {
+            const label = context.dataset.label || ''
+            const value = context.parsed.y
+            if (value === null || value === undefined) return `${label}: N/A`
+            return `${label}: ${value.toFixed(1)}°${units}`
+          },
+          afterBody: (items: any) => {
+            const dataIndex = items[0].dataIndex
+            const point = readings[dataIndex]
+            if (point) {
+              return [
+                '',
+                `Heater: ${point.relay_state ? '🔥 ON' : '⚪ OFF'}`,
+                `Output: ${point.pid_output.toFixed(1)}%`,
+              ]
+            }
+            return []
+          },
+        },
+      },
+    },
   }
 
   return (
@@ -342,6 +687,39 @@ export function History() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Temperature Chart */}
+      {!loading && readings.length > 0 && (
+        <div className="card">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Temperature History
+            </h3>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600">Units:</label>
+              <select
+                value={units}
+                onChange={(e) => setUnits(e.target.value as 'F' | 'C')}
+                className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="F">°F</option>
+                <option value="C">°C</option>
+              </select>
+            </div>
+          </div>
+          
+          <div className="h-96">
+            <Line ref={chartRef} data={chartConfig} options={chartOptions} plugins={[heaterBackgroundPlugin]} />
+          </div>
+          
+          <div className="mt-4 text-sm text-gray-600">
+            <p className="flex items-center gap-2">
+              <span className="inline-block w-8 h-3 bg-green-500 bg-opacity-15 border-l-2 border-green-500"></span>
+              Green background indicates heater ON periods
+            </p>
           </div>
         </div>
       )}
