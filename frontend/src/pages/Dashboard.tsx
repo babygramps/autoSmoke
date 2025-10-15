@@ -44,6 +44,7 @@ interface SortableItemProps {
   size: TileSize
   onResize: (id: string, newSize: TileSize) => void
   title: string
+  locked: boolean
 }
 
 const SIZE_CONFIG = {
@@ -53,7 +54,7 @@ const SIZE_CONFIG = {
   full: { cols: 'col-span-1 md:col-span-2 lg:col-span-4', label: 'Full Width', icon: '█' },
 }
 
-function SortableItem({ id, children, size, onResize, title }: SortableItemProps) {
+function SortableItem({ id, children, size, onResize, title, locked }: SortableItemProps) {
   const {
     attributes,
     listeners,
@@ -61,7 +62,7 @@ function SortableItem({ id, children, size, onResize, title }: SortableItemProps
     transform,
     transition,
     isDragging,
-  } = useSortable({ id })
+  } = useSortable({ id, disabled: locked })
   const [showSizeMenu, setShowSizeMenu] = useState(false)
 
   const style = {
@@ -79,8 +80,9 @@ function SortableItem({ id, children, size, onResize, title }: SortableItemProps
       style={style}
       className={`${SIZE_CONFIG[size].cols} relative group`}
     >
-      {/* Control Panel - Top Right */}
-      <div className="absolute top-3 right-3 z-20 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
+      {/* Control Panel - Top Right - Only show when not locked */}
+      {!locked && (
+        <div className="absolute top-3 right-3 z-20 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
         {/* Size Selector */}
         <div className="relative">
           <button
@@ -149,6 +151,7 @@ function SortableItem({ id, children, size, onResize, title }: SortableItemProps
           </svg>
         </div>
       </div>
+      )}
 
       {/* Content */}
       <div className="h-full">
@@ -207,6 +210,10 @@ export function Dashboard() {
   const [tileVisibility, setTileVisibility] = useState<Record<string, boolean>>(() => {
     const saved = localStorage.getItem('dashboardTileVisibility')
     return saved ? JSON.parse(saved) : DEFAULT_VISIBILITY
+  })
+  const [locked, setLocked] = useState<boolean>(() => {
+    const saved = localStorage.getItem('dashboardLocked')
+    return saved ? JSON.parse(saved) : false
   })
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
@@ -336,6 +343,14 @@ export function Dashboard() {
       const updated = { ...prev, [id]: !prev[id] }
       localStorage.setItem('dashboardTileVisibility', JSON.stringify(updated))
       return updated
+    })
+  }
+
+  const toggleLock = () => {
+    setLocked((prev) => {
+      const newLocked = !prev
+      localStorage.setItem('dashboardLocked', JSON.stringify(newLocked))
+      return newLocked
     })
   }
 
@@ -583,6 +598,27 @@ export function Dashboard() {
           
           <div className="flex items-center gap-2">
             <button
+              onClick={toggleLock}
+              className={`btn btn-sm flex items-center gap-2 transition-all duration-200 ${
+                locked 
+                  ? 'btn-primary shadow-lg' 
+                  : 'btn-outline hover:scale-105'
+              }`}
+              title={locked ? "Unlock tiles (enable moving/resizing)" : "Lock tiles (disable moving/resizing)"}
+            >
+              {locked ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                </svg>
+              )}
+              <span className="hidden sm:inline">{locked ? 'Locked' : 'Unlocked'}</span>
+            </button>
+
+            <button
               onClick={resetLayout}
               className="btn btn-outline btn-sm flex items-center gap-2 hover:scale-105 transition-transform"
               title="Reset to default layout"
@@ -726,6 +762,7 @@ export function Dashboard() {
                   size={tile.size}
                   onResize={handleResize}
                   title={tile.title}
+                  locked={locked}
                 >
                   {tile.component}
                 </SortableItem>

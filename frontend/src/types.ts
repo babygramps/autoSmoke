@@ -242,6 +242,7 @@ export interface CookingPhase {
   started_at: string | null;
   ended_at: string | null;
   is_active: boolean;
+  is_paused: boolean;
   completion_conditions: PhaseConditions;
   actual_duration_minutes: number | null;
 }

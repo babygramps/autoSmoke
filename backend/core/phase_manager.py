@@ -371,6 +371,75 @@ class PhaseManager:
             logger.error(error_msg)
             return (False, error_msg)
     
+    def pause_phase(self, smoke_id: int) -> Tuple[bool, Optional[str]]:
+        """
+        Pause the current phase.
+        
+        When paused, phase condition checking is disabled but temperature control continues.
+        
+        Returns:
+            (success, error_message)
+        """
+        try:
+            with get_session_sync() as session:
+                smoke = session.get(Smoke, smoke_id)
+                if not smoke or not smoke.current_phase_id:
+                    return (False, "No active phase to pause")
+                
+                current_phase = session.get(SmokePhase, smoke.current_phase_id)
+                if not current_phase:
+                    return (False, "Current phase not found")
+                
+                if current_phase.is_paused:
+                    return (False, "Phase is already paused")
+                
+                current_phase.is_paused = True
+                session.commit()
+                
+                logger.info(f"Paused phase {current_phase.phase_name} for smoke {smoke_id}")
+                return (True, None)
+                
+        except Exception as e:
+            error_msg = f"Failed to pause phase: {str(e)}"
+            logger.error(error_msg)
+            return (False, error_msg)
+    
+    def resume_phase(self, smoke_id: int) -> Tuple[bool, Optional[str]]:
+        """
+        Resume the current paused phase.
+        
+        Returns:
+            (success, error_message)
+        """
+        try:
+            with get_session_sync() as session:
+                smoke = session.get(Smoke, smoke_id)
+                if not smoke or not smoke.current_phase_id:
+                    return (False, "No active phase to resume")
+                
+                current_phase = session.get(SmokePhase, smoke.current_phase_id)
+                if not current_phase:
+                    return (False, "Current phase not found")
+                
+                if not current_phase.is_paused:
+                    return (False, "Phase is not paused")
+                
+                current_phase.is_paused = False
+                
+                # Clear stability history when resuming to avoid false completions
+                if smoke_id in self._stability_history:
+                    self._stability_history[smoke_id].clear()
+                
+                session.commit()
+                
+                logger.info(f"Resumed phase {current_phase.phase_name} for smoke {smoke_id}")
+                return (True, None)
+                
+        except Exception as e:
+            error_msg = f"Failed to resume phase: {str(e)}"
+            logger.error(error_msg)
+            return (False, error_msg)
+    
     def get_phase_progress(self, smoke_id: int, current_temp_f: float, meat_temp_f: Optional[float] = None) -> Dict[str, Any]:
         """
         Get progress information for current phase.

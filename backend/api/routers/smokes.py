@@ -745,6 +745,72 @@ async def skip_phase(smoke_id: int):
         raise HTTPException(status_code=500, detail=f"Failed to skip phase: {str(e)}")
 
 
+@router.post("/{smoke_id}/pause-phase")
+async def pause_phase(smoke_id: int):
+    """Pause the current phase. Temperature control continues but phase condition checking stops."""
+    try:
+        with get_session_sync() as session:
+            smoke = session.get(Smoke, smoke_id)
+            if not smoke:
+                raise HTTPException(status_code=404, detail="Smoke session not found")
+        
+        success, error_msg = phase_manager.pause_phase(smoke_id)
+        
+        if not success:
+            raise HTTPException(status_code=400, detail=error_msg or "Failed to pause phase")
+        
+        current_phase = phase_manager.get_current_phase(smoke_id)
+        
+        return {
+            "status": "success",
+            "message": "Phase paused",
+            "current_phase": {
+                "id": current_phase.id,
+                "phase_name": current_phase.phase_name,
+                "target_temp_f": current_phase.target_temp_f,
+                "is_paused": current_phase.is_paused
+            } if current_phase else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to pause phase: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to pause phase: {str(e)}")
+
+
+@router.post("/{smoke_id}/resume-phase")
+async def resume_phase(smoke_id: int):
+    """Resume the current paused phase."""
+    try:
+        with get_session_sync() as session:
+            smoke = session.get(Smoke, smoke_id)
+            if not smoke:
+                raise HTTPException(status_code=404, detail="Smoke session not found")
+        
+        success, error_msg = phase_manager.resume_phase(smoke_id)
+        
+        if not success:
+            raise HTTPException(status_code=400, detail=error_msg or "Failed to resume phase")
+        
+        current_phase = phase_manager.get_current_phase(smoke_id)
+        
+        return {
+            "status": "success",
+            "message": "Phase resumed",
+            "current_phase": {
+                "id": current_phase.id,
+                "phase_name": current_phase.phase_name,
+                "target_temp_f": current_phase.target_temp_f,
+                "is_paused": current_phase.is_paused
+            } if current_phase else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to resume phase: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to resume phase: {str(e)}")
+
+
 @router.get("/{smoke_id}/phase-progress")
 async def get_phase_progress(smoke_id: int):
     """Get progress information for current phase."""

@@ -36,6 +36,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [timeRange, setTimeRange] = useState<number | null>(null) // null = all session data, or hours
+  const [filterMode, setFilterMode] = useState<'session' | 'all'>('session') // session = filter by active session, all = show all data
   const [thermocouples, setThermocouples] = useState<Thermocouple[]>([])
   const chartRef = useRef<ChartJS<'line', number[], string>>(null)
   const isMountedRef = useRef(true)
@@ -68,8 +69,8 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
           include_thermocouples: true, // Include thermocouple readings
         }
         
-        if (smokeId) {
-          // Filter by session
+        // Apply session filter if in session mode and a session is active
+        if (filterMode === 'session' && smokeId) {
           params.smoke_id = smokeId
           
           if (timeRange !== null) {
@@ -78,8 +79,18 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
             params.from_time = startTime.toISOString()
           }
           // If timeRange is null, don't set from_time to get ALL session data
+        } else if (filterMode === 'all') {
+          // Show all data regardless of session
+          if (timeRange !== null) {
+            const startTime = new Date(endTime.getTime() - timeRange * 60 * 60 * 1000)
+            params.from_time = startTime.toISOString()
+          } else {
+            // Default to last 2 hours if no time range selected
+            const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000)
+            params.from_time = startTime.toISOString()
+          }
         } else {
-          // No session, default to last 2 hours
+          // No session and no filter mode, default to last 2 hours
           const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000)
           params.from_time = startTime.toISOString()
         }
@@ -108,6 +119,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
               count: data.length,
               firstTimestamp: data[0].timestamp,
               lastTimestamp: data[data.length - 1].timestamp,
+              filterMode: filterMode,
               smokeId: smokeId,
               timeRange: timeRange,
               params: params
@@ -132,7 +144,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
     return () => {
       cancelled = true
     }
-  }, [smokeId, timeRange])
+  }, [smokeId, timeRange, filterMode])
   
   // Track mounted state
   useEffect(() => {
@@ -493,25 +505,43 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
 
   return (
     <div className="card">
-      {/* Time Range Selector */}
-      <div className="mb-4 flex items-center justify-between">
+      {/* Filter and Time Range Selectors */}
+      <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
         <h3 className="text-lg font-semibold text-gray-900">
-          Temperature and Control History {smokeId ? '(Current Session)' : ''}
+          Temperature and Control History
         </h3>
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">View:</label>
-          <select
-            value={timeRange === null ? 'all' : timeRange}
-            onChange={(e) => setTimeRange(e.target.value === 'all' ? null : Number(e.target.value))}
-            className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            {smokeId && <option value="all">All Session Data</option>}
-            <option value="1">Last 1 Hour</option>
-            <option value="2">Last 2 Hours</option>
-            <option value="4">Last 4 Hours</option>
-            <option value="8">Last 8 Hours</option>
-            <option value="24">Last 24 Hours</option>
-          </select>
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Filter Mode Selector - only show if there's an active session */}
+          {smokeId && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600">Filter:</label>
+              <select
+                value={filterMode}
+                onChange={(e) => setFilterMode(e.target.value as 'session' | 'all')}
+                className="text-sm border border-gray-300 rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500 font-medium"
+              >
+                <option value="session">Current Session Only</option>
+                <option value="all">All Data</option>
+              </select>
+            </div>
+          )}
+          
+          {/* Time Range Selector */}
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-600">View:</label>
+            <select
+              value={timeRange === null ? 'all' : timeRange}
+              onChange={(e) => setTimeRange(e.target.value === 'all' ? null : Number(e.target.value))}
+              className="text-sm border border-gray-300 rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              {filterMode === 'session' && smokeId && <option value="all">Full Session</option>}
+              <option value="1">Last 1 Hour</option>
+              <option value="2">Last 2 Hours</option>
+              <option value="4">Last 4 Hours</option>
+              <option value="8">Last 8 Hours</option>
+              <option value="24">Last 24 Hours</option>
+            </select>
+          </div>
         </div>
       </div>
       

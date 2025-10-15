@@ -544,7 +544,7 @@ class SmokerController:
         """Check if current phase conditions are met and request transition if needed."""
         try:
             from core.phase_manager import phase_manager
-            from db.models import Smoke
+            from db.models import Smoke, SmokePhase
             
             # Get smoke session
             with get_session_sync() as session:
@@ -554,6 +554,15 @@ class SmokerController:
                 
                 # Don't check if already pending transition
                 if smoke.pending_phase_transition:
+                    return
+                
+                # Get current phase to check if it's paused
+                current_phase = session.get(SmokePhase, smoke.current_phase_id)
+                if not current_phase:
+                    return
+                
+                # Don't check conditions if phase is paused
+                if current_phase.is_paused:
                     return
                 
                 meat_probe_tc_id = smoke.meat_probe_tc_id

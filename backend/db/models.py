@@ -58,6 +58,7 @@ class SmokePhase(SQLModel, table=True):
     started_at: datetime = Field(default_factory=datetime.utcnow, description="When phase started")
     ended_at: Optional[datetime] = Field(default=None, description="When phase ended")
     is_active: bool = Field(default=False, description="Whether this is the currently active phase")
+    is_paused: bool = Field(default=False, description="Whether this phase is currently paused")
     completion_conditions: str = Field(description="JSON with stability/time/temp conditions")
     actual_duration_minutes: Optional[int] = Field(default=None, description="Actual phase duration")
 

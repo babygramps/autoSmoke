@@ -63,6 +63,55 @@ export function PhaseProgress({ smokeId, currentPhase, onEditPhase }: PhaseProgr
     }
   }
 
+  const handleSkipPhase = async () => {
+    if (!confirm('Skip to the next phase? This will end the current phase immediately.')) {
+      return
+    }
+    
+    try {
+      setLoading(true)
+      await apiClient.skipPhase(smokeId)
+      // Reload phases and progress
+      await loadPhases()
+      await loadProgress()
+    } catch (error) {
+      console.error('Failed to skip phase:', error)
+      alert(`Failed to skip phase: ${error}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handlePausePhase = async () => {
+    try {
+      setLoading(true)
+      await apiClient.pausePhase(smokeId)
+      // Reload phases and progress
+      await loadPhases()
+      await loadProgress()
+    } catch (error) {
+      console.error('Failed to pause phase:', error)
+      alert(`Failed to pause phase: ${error}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleResumePhase = async () => {
+    try {
+      setLoading(true)
+      await apiClient.resumePhase(smokeId)
+      // Reload phases and progress
+      await loadPhases()
+      await loadProgress()
+    } catch (error) {
+      console.error('Failed to resume phase:', error)
+      alert(`Failed to resume phase: ${error}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   if (!currentPhase) {
     return (
       <div className="card">
@@ -98,29 +147,57 @@ export function PhaseProgress({ smokeId, currentPhase, onEditPhase }: PhaseProgr
     <div className="card">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-gray-900">Cooking Phase</h3>
-        {onEditPhase && (
+        <div className="flex gap-2">
+          {onEditPhase && (
+            <button
+              onClick={onEditPhase}
+              className="btn btn-sm btn-outline"
+            >
+              Edit Phase
+            </button>
+          )}
+          {currentPhase.is_paused ? (
+            <button
+              onClick={handleResumePhase}
+              disabled={loading}
+              className="btn btn-sm btn-primary"
+            >
+              ▶ Resume
+            </button>
+          ) : (
+            <button
+              onClick={handlePausePhase}
+              disabled={loading}
+              className="btn btn-sm btn-outline"
+            >
+              ⏸ Pause
+            </button>
+          )}
           <button
-            onClick={onEditPhase}
+            onClick={handleSkipPhase}
+            disabled={loading}
             className="btn btn-sm btn-outline"
           >
-            Edit Phase
+            Skip Phase
           </button>
-        )}
+        </div>
       </div>
 
       {/* Current Phase Card */}
-      <div className="bg-primary-50 border-2 border-primary-200 rounded-lg p-4 mb-4">
+      <div className={`border-2 rounded-lg p-4 mb-4 ${currentPhase.is_paused ? 'bg-yellow-50 border-yellow-400' : 'bg-primary-50 border-primary-200'}`}>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center space-x-2">
             <span className="text-2xl">{icon}</span>
             <div>
-              <div className="text-sm font-medium text-primary-700">Current Phase</div>
-              <div className="text-xl font-bold text-primary-900">{displayName}</div>
+              <div className={`text-sm font-medium ${currentPhase.is_paused ? 'text-yellow-700' : 'text-primary-700'}`}>
+                {currentPhase.is_paused ? 'Current Phase (Paused)' : 'Current Phase'}
+              </div>
+              <div className={`text-xl font-bold ${currentPhase.is_paused ? 'text-yellow-900' : 'text-primary-900'}`}>{displayName}</div>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-sm text-primary-700">Target</div>
-            <div className="text-2xl font-bold text-primary-900">
+            <div className={`text-sm ${currentPhase.is_paused ? 'text-yellow-700' : 'text-primary-700'}`}>Target</div>
+            <div className={`text-2xl font-bold ${currentPhase.is_paused ? 'text-yellow-900' : 'text-primary-900'}`}>
               {currentPhase.target_temp_f}°F
             </div>
           </div>

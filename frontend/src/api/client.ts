@@ -317,6 +317,18 @@ class ApiClient {
     });
   }
 
+  async pausePhase(smokeId: number): Promise<{ status: string; message: string; current_phase: any }> {
+    return this.request(`/smokes/${smokeId}/pause-phase`, {
+      method: 'POST',
+    });
+  }
+
+  async resumePhase(smokeId: number): Promise<{ status: string; message: string; current_phase: any }> {
+    return this.request(`/smokes/${smokeId}/resume-phase`, {
+      method: 'POST',
+    });
+  }
+
   async getPhaseProgress(smokeId: number): Promise<PhaseProgress> {
     return this.request(`/smokes/${smokeId}/phase-progress`);
   }
