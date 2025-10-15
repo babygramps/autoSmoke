@@ -1,26 +1,46 @@
 """Smoke session management API endpoints."""
 
+import json
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from db.models import Smoke
+from db.models import Smoke, SmokePhase, CookingRecipe
 from db.session import get_session_sync
 from core.controller import controller
+from core.phase_manager import phase_manager
 from sqlmodel import select
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
 class SmokeCreate(BaseModel):
+    """Schema for creating a new smoke session with recipe."""
     name: str
     description: Optional[str] = None
+    recipe_id: int
+    # Customizable parameters
+    preheat_temp_f: float = 270.0
+    cook_temp_f: float = 225.0
+    finish_temp_f: float = 160.0
+    meat_target_temp_f: Optional[float] = None
+    meat_probe_tc_id: Optional[int] = None
+    enable_stall_detection: bool = True
 
 
 class SmokeUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+
+
+class PhaseUpdate(BaseModel):
+    """Schema for updating phase parameters."""
+    target_temp_f: Optional[float] = None
+    completion_conditions: Optional[Dict[str, Any]] = None
 
 
 @router.get("")
@@ -85,9 +105,14 @@ async def get_smoke(smoke_id: int):
 
 @router.post("")
 async def create_smoke(smoke_create: SmokeCreate):
-    """Create a new smoke session."""
+    """Create a new smoke session with recipe and phases."""
     try:
         with get_session_sync() as session:
+            # Get the recipe
+            recipe = session.get(CookingRecipe, smoke_create.recipe_id)
+            if not recipe:
+                raise HTTPException(status_code=404, detail=f"Recipe {smoke_create.recipe_id} not found")
+            
             # Deactivate all other smoke sessions
             statement = select(Smoke).where(Smoke.is_active == True)
             active_smokes = session.exec(statement).all()
@@ -102,27 +127,89 @@ async def create_smoke(smoke_create: SmokeCreate):
             smoke = Smoke(
                 name=smoke_create.name,
                 description=smoke_create.description,
-                is_active=True
+                is_active=True,
+                recipe_id=recipe.id,
+                recipe_config=recipe.phases,  # Store snapshot of recipe config
+                meat_target_temp_f=smoke_create.meat_target_temp_f,
+                meat_probe_tc_id=smoke_create.meat_probe_tc_id,
+                pending_phase_transition=False
             )
             session.add(smoke)
             session.commit()
             session.refresh(smoke)
+            
+            # Create phases from recipe with user customizations
+            recipe_phases = json.loads(recipe.phases)
+            created_phases = []
+            
+            for phase_config in recipe_phases:
+                # Apply user temperature customizations
+                target_temp_f = phase_config["target_temp_f"]
+                if phase_config["phase_name"] == "preheat":
+                    target_temp_f = smoke_create.preheat_temp_f
+                elif phase_config["phase_name"] in ["load_recover", "smoke"]:
+                    target_temp_f = smoke_create.cook_temp_f
+                elif phase_config["phase_name"] == "finish_hold":
+                    target_temp_f = smoke_create.finish_temp_f
+                
+                # Adjust completion conditions if stall detection is disabled
+                conditions = phase_config["completion_conditions"].copy()
+                if not smoke_create.enable_stall_detection and phase_config["phase_name"] == "stall":
+                    # Skip stall phase by setting very short duration
+                    conditions["max_duration_min"] = 1
+                
+                phase = SmokePhase(
+                    smoke_id=smoke.id,
+                    phase_name=phase_config["phase_name"],
+                    phase_order=phase_config["phase_order"],
+                    target_temp_f=target_temp_f,
+                    completion_conditions=json.dumps(conditions),
+                    is_active=False  # Will activate first phase manually
+                )
+                session.add(phase)
+                created_phases.append(phase)
+            
+            session.commit()
+            
+            # Refresh all phases to get IDs
+            for phase in created_phases:
+                session.refresh(phase)
+            
+            # Activate first phase and set as current
+            if created_phases:
+                first_phase = created_phases[0]
+                first_phase.is_active = True
+                first_phase.started_at = datetime.utcnow()
+                smoke.current_phase_id = first_phase.id
+                
+                # Set controller setpoint to first phase target
+                await controller.set_setpoint(first_phase.target_temp_f)
+                
+                session.commit()
+                logger.info(f"Started smoke session '{smoke.name}' with phase: {first_phase.phase_name}")
             
             # Set as active in controller
             controller.set_active_smoke(smoke.id)
             
             return {
                 "status": "success",
-                "message": f"Smoke session '{smoke.name}' created",
+                "message": f"Smoke session '{smoke.name}' created with {len(created_phases)} phases",
                 "smoke": {
                     "id": smoke.id,
                     "name": smoke.name,
                     "description": smoke.description,
                     "started_at": smoke.started_at.isoformat() + 'Z' if not smoke.started_at.isoformat().endswith('Z') else smoke.started_at.isoformat(),
-                    "is_active": smoke.is_active
+                    "is_active": smoke.is_active,
+                    "recipe_id": smoke.recipe_id,
+                    "current_phase_id": smoke.current_phase_id,
+                    "meat_target_temp_f": smoke.meat_target_temp_f,
+                    "meat_probe_tc_id": smoke.meat_probe_tc_id
                 }
             }
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Failed to create smoke session: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create smoke session: {str(e)}")
 
 
@@ -295,4 +382,196 @@ async def _compute_smoke_stats(session, smoke: Smoke):
         smoke.avg_temp_f = round(result[0], 1)
         smoke.min_temp_f = round(result[1], 1)
         smoke.max_temp_f = round(result[2], 1)
+
+
+# ========== Phase Management Endpoints ==========
+
+@router.get("/{smoke_id}/phases")
+async def get_smoke_phases(smoke_id: int):
+    """Get all phases for a smoke session."""
+    try:
+        with get_session_sync() as session:
+            smoke = session.get(Smoke, smoke_id)
+            if not smoke:
+                raise HTTPException(status_code=404, detail="Smoke session not found")
+            
+            statement = select(SmokePhase).where(SmokePhase.smoke_id == smoke_id).order_by(SmokePhase.phase_order)
+            phases = session.exec(statement).all()
+            
+            return {
+                "phases": [
+                    {
+                        "id": phase.id,
+                        "phase_name": phase.phase_name,
+                        "phase_order": phase.phase_order,
+                        "target_temp_f": phase.target_temp_f,
+                        "started_at": phase.started_at.isoformat() if phase.started_at else None,
+                        "ended_at": phase.ended_at.isoformat() if phase.ended_at else None,
+                        "is_active": phase.is_active,
+                        "completion_conditions": json.loads(phase.completion_conditions),
+                        "actual_duration_minutes": phase.actual_duration_minutes
+                    }
+                    for phase in phases
+                ]
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get phases: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get phases: {str(e)}")
+
+
+@router.post("/{smoke_id}/approve-phase-transition")
+async def approve_phase_transition(smoke_id: int):
+    """User approves moving to next phase."""
+    try:
+        success, error_msg = phase_manager.approve_phase_transition(smoke_id)
+        
+        if not success:
+            raise HTTPException(status_code=400, detail=error_msg or "Failed to approve phase transition")
+        
+        # Update controller setpoint to new phase target
+        current_phase = phase_manager.get_current_phase(smoke_id)
+        if current_phase:
+            await controller.set_setpoint(current_phase.target_temp_f)
+            logger.info(f"Controller setpoint updated to {current_phase.target_temp_f}°F for phase {current_phase.phase_name}")
+            
+            # Broadcast phase started event
+            try:
+                from ws.manager import manager as ws_manager
+                await ws_manager.broadcast_phase_event("phase_started", {
+                    "smoke_id": smoke_id,
+                    "phase": {
+                        "id": current_phase.id,
+                        "phase_name": current_phase.phase_name,
+                        "target_temp_f": current_phase.target_temp_f,
+                        "completion_conditions": json.loads(current_phase.completion_conditions)
+                    }
+                })
+            except Exception as e:
+                logger.error(f"Failed to broadcast phase started event: {e}")
+        
+        return {
+            "status": "success",
+            "message": "Phase transition approved",
+            "current_phase": {
+                "id": current_phase.id,
+                "phase_name": current_phase.phase_name,
+                "target_temp_f": current_phase.target_temp_f
+            } if current_phase else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to approve phase transition: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to approve phase transition: {str(e)}")
+
+
+@router.put("/{smoke_id}/phases/{phase_id}")
+async def update_phase(smoke_id: int, phase_id: int, phase_update: PhaseUpdate):
+    """Edit phase parameters during session."""
+    try:
+        with get_session_sync() as session:
+            # Verify smoke exists
+            smoke = session.get(Smoke, smoke_id)
+            if not smoke:
+                raise HTTPException(status_code=404, detail="Smoke session not found")
+            
+            # Verify phase belongs to this smoke
+            phase = session.get(SmokePhase, phase_id)
+            if not phase or phase.smoke_id != smoke_id:
+                raise HTTPException(status_code=404, detail="Phase not found")
+        
+        # Update phase using phase manager
+        success, error_msg = phase_manager.update_phase(
+            phase_id,
+            target_temp_f=phase_update.target_temp_f,
+            completion_conditions=phase_update.completion_conditions
+        )
+        
+        if not success:
+            raise HTTPException(status_code=400, detail=error_msg or "Failed to update phase")
+        
+        # If this is the active phase and temp changed, update controller
+        with get_session_sync() as session:
+            phase = session.get(SmokePhase, phase_id)
+            if phase and phase.is_active and phase_update.target_temp_f is not None:
+                await controller.set_setpoint(phase_update.target_temp_f)
+                logger.info(f"Updated active phase setpoint to {phase_update.target_temp_f}°F")
+        
+        return {
+            "status": "success",
+            "message": "Phase updated"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update phase: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update phase: {str(e)}")
+
+
+@router.post("/{smoke_id}/skip-phase")
+async def skip_phase(smoke_id: int):
+    """Skip current phase and move to next."""
+    try:
+        with get_session_sync() as session:
+            smoke = session.get(Smoke, smoke_id)
+            if not smoke:
+                raise HTTPException(status_code=404, detail="Smoke session not found")
+        
+        success, error_msg = phase_manager.skip_phase(smoke_id)
+        
+        if not success:
+            raise HTTPException(status_code=400, detail=error_msg or "Failed to skip phase")
+        
+        # Update controller setpoint to new phase target
+        current_phase = phase_manager.get_current_phase(smoke_id)
+        if current_phase:
+            await controller.set_setpoint(current_phase.target_temp_f)
+            logger.info(f"Skipped to phase {current_phase.phase_name}, setpoint: {current_phase.target_temp_f}°F")
+        
+        return {
+            "status": "success",
+            "message": "Phase skipped",
+            "current_phase": {
+                "id": current_phase.id,
+                "phase_name": current_phase.phase_name,
+                "target_temp_f": current_phase.target_temp_f
+            } if current_phase else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to skip phase: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to skip phase: {str(e)}")
+
+
+@router.get("/{smoke_id}/phase-progress")
+async def get_phase_progress(smoke_id: int):
+    """Get progress information for current phase."""
+    try:
+        with get_session_sync() as session:
+            smoke = session.get(Smoke, smoke_id)
+            if not smoke:
+                raise HTTPException(status_code=404, detail="Smoke session not found")
+        
+        # Get current temperature
+        current_temp_f = controller.current_temp_f if controller.current_temp_f else 0.0
+        
+        # Get meat temp if probe is configured
+        meat_temp_f = None
+        if smoke.meat_probe_tc_id and smoke.meat_probe_tc_id in controller.tc_readings:
+            meat_temp_c, fault = controller.tc_readings[smoke.meat_probe_tc_id]
+            if not fault and meat_temp_c is not None:
+                from core.config import settings
+                meat_temp_f = settings.celsius_to_fahrenheit(meat_temp_c)
+        
+        progress = phase_manager.get_phase_progress(smoke_id, current_temp_f, meat_temp_f)
+        
+        return progress
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get phase progress: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get phase progress: {str(e)}")
 

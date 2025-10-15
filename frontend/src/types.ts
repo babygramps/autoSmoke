@@ -69,6 +69,16 @@ export interface ControllerStatus {
   relay_state: boolean;
   loop_count: number;
   last_loop_time: number | null;
+  current_phase: {
+    id: number;
+    phase_name: string;
+    phase_order: number;
+    target_temp_f: number;
+    started_at: string | null;
+    is_active: boolean;
+    completion_conditions: PhaseConditions;
+  } | null;
+  pending_phase_transition: boolean;
   alert_summary: AlertSummary;
   alerts: Alert[];
 }
@@ -103,6 +113,41 @@ export interface TelemetryData {
   type: 'telemetry';
   data: ControllerStatus;
 }
+
+export interface PhaseTransitionReadyEvent {
+  timestamp: string;
+  type: 'phase_transition_ready';
+  data: {
+    smoke_id: number;
+    reason: string;
+    current_phase: {
+      id: number;
+      phase_name: string;
+      target_temp_f: number;
+    } | null;
+    next_phase: {
+      id: number;
+      phase_name: string;
+      target_temp_f: number;
+    } | null;
+  };
+}
+
+export interface PhaseStartedEvent {
+  timestamp: string;
+  type: 'phase_started';
+  data: {
+    smoke_id: number;
+    phase: {
+      id: number;
+      phase_name: string;
+      target_temp_f: number;
+      completion_conditions: PhaseConditions;
+    };
+  };
+}
+
+export type WebSocketMessage = TelemetryData | PhaseTransitionReadyEvent | PhaseStartedEvent;
 
 export interface ChartDataPoint {
   timestamp: string;
@@ -174,15 +219,84 @@ export interface SettingsUpdate {
   webhook_url?: string | null;
 }
 
+// Phase types
+export interface PhaseConditions {
+  stability_range_f?: number;
+  stability_duration_min?: number;
+  max_duration_min?: number;
+  meat_temp_threshold_f?: number;
+}
+
+export interface CookingPhase {
+  id: number;
+  smoke_id: number;
+  phase_name: 'preheat' | 'load_recover' | 'smoke' | 'stall' | 'finish_hold';
+  phase_order: number;
+  target_temp_f: number;
+  started_at: string | null;
+  ended_at: string | null;
+  is_active: boolean;
+  completion_conditions: PhaseConditions;
+  actual_duration_minutes: number | null;
+}
+
+export interface PhaseConfig {
+  phase_name: string;
+  phase_order: number;
+  target_temp_f: number;
+  completion_conditions: PhaseConditions;
+}
+
+export interface CookingRecipe {
+  id: number;
+  name: string;
+  description: string | null;
+  phases: PhaseConfig[];
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PhaseProgress {
+  has_phase: boolean;
+  phase_name?: string;
+  phase_order?: number;
+  target_temp_f?: number;
+  duration_minutes?: number;
+  overall_progress?: number;
+  progress_factors?: Array<{
+    type: string;
+    progress: number;
+    current: number;
+    target: number;
+    met: boolean;
+    in_range?: boolean;
+  }>;
+  conditions_met?: boolean;
+  error?: string;
+}
+
 // Smoke/Session types
 export interface SmokeCreate {
   name: string;
   description?: string;
+  recipe_id: number;
+  preheat_temp_f?: number;
+  cook_temp_f?: number;
+  finish_temp_f?: number;
+  meat_target_temp_f?: number;
+  meat_probe_tc_id?: number;
+  enable_stall_detection?: boolean;
 }
 
 export interface SmokeUpdate {
   name?: string;
   description?: string;
+}
+
+export interface PhaseUpdate {
+  target_temp_f?: number;
+  completion_conditions?: PhaseConditions;
 }
 
 // Thermocouple types

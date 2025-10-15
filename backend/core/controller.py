@@ -359,6 +359,10 @@ class SmokerController:
                 # Time-proportional mode - PID with duty cycle control
                 await self._time_proportional_control(temp_c)
         
+        # Check phase conditions (if session has phases)
+        if self.active_smoke_id:
+            await self._check_phase_conditions(temp_c)
+        
         # Log reading to database
         await self._log_reading()
         
@@ -499,6 +503,102 @@ class SmokerController:
         except Exception as e:
             logger.error(f"Failed to log event: {e}")
     
+    async def _check_phase_conditions(self, temp_c: float):
+        """Check if current phase conditions are met and request transition if needed."""
+        try:
+            from core.phase_manager import phase_manager
+            from db.models import Smoke
+            
+            # Get smoke session
+            with get_session_sync() as session:
+                smoke = session.get(Smoke, self.active_smoke_id)
+                if not smoke or not smoke.current_phase_id:
+                    return  # No active phase
+                
+                # Don't check if already pending transition
+                if smoke.pending_phase_transition:
+                    return
+                
+                meat_probe_tc_id = smoke.meat_probe_tc_id
+            
+            # Get meat temperature if meat probe is configured
+            meat_temp_f = None
+            if meat_probe_tc_id and meat_probe_tc_id in self.tc_readings:
+                meat_temp_c, fault = self.tc_readings[meat_probe_tc_id]
+                if not fault and meat_temp_c is not None:
+                    meat_temp_f = settings.celsius_to_fahrenheit(meat_temp_c)
+            
+            # Check if phase conditions are met
+            current_temp_f = settings.celsius_to_fahrenheit(temp_c)
+            conditions_met, reason = phase_manager.check_phase_conditions(
+                self.active_smoke_id,
+                current_temp_f,
+                meat_temp_f
+            )
+            
+            if conditions_met:
+                # Request phase transition
+                success = phase_manager.request_phase_transition(self.active_smoke_id, reason)
+                if success:
+                    logger.info(f"Phase transition requested for smoke {self.active_smoke_id}: {reason}")
+                    
+                    # Emit websocket event
+                    try:
+                        from ws.manager import manager as ws_manager
+                        current_phase = phase_manager.get_current_phase(self.active_smoke_id)
+                        next_phase = phase_manager.get_next_phase(self.active_smoke_id)
+                        
+                        await ws_manager.broadcast_phase_event("phase_transition_ready", {
+                            "smoke_id": self.active_smoke_id,
+                            "reason": reason,
+                            "current_phase": {
+                                "id": current_phase.id,
+                                "phase_name": current_phase.phase_name,
+                                "target_temp_f": current_phase.target_temp_f
+                            } if current_phase else None,
+                            "next_phase": {
+                                "id": next_phase.id,
+                                "phase_name": next_phase.phase_name,
+                                "target_temp_f": next_phase.target_temp_f
+                            } if next_phase else None
+                        })
+                    except Exception as e:
+                        logger.error(f"Failed to broadcast phase transition event: {e}")
+                    
+                    await self._log_event(
+                        "phase_transition_ready",
+                        f"Phase transition ready: {reason}"
+                    )
+        
+        except Exception as e:
+            logger.error(f"Failed to check phase conditions: {e}")
+    
+    def get_current_phase_info(self) -> Optional[dict]:
+        """Get current phase information for status."""
+        try:
+            from core.phase_manager import phase_manager
+            
+            if not self.active_smoke_id:
+                return None
+            
+            current_phase = phase_manager.get_current_phase(self.active_smoke_id)
+            if not current_phase:
+                return None
+            
+            import json
+            return {
+                "id": current_phase.id,
+                "phase_name": current_phase.phase_name,
+                "phase_order": current_phase.phase_order,
+                "target_temp_f": current_phase.target_temp_f,
+                "started_at": current_phase.started_at.isoformat() if current_phase.started_at else None,
+                "is_active": current_phase.is_active,
+                "completion_conditions": json.loads(current_phase.completion_conditions)
+            }
+        except Exception as e:
+            logger.error(f"Failed to get current phase info: {e}")
+            return None
+    
     def get_status(self) -> dict:
         """Get current controller status."""
         # Build thermocouple readings for status
@@ -510,6 +610,20 @@ class SmokerController:
                     "temp_f": settings.celsius_to_fahrenheit(temp_c),
                     "fault": fault
                 }
+        
+        # Get phase information if active session
+        current_phase = self.get_current_phase_info()
+        pending_phase_transition = False
+        
+        if self.active_smoke_id:
+            try:
+                with get_session_sync() as session:
+                    from db.models import Smoke
+                    smoke = session.get(Smoke, self.active_smoke_id)
+                    if smoke:
+                        pending_phase_transition = smoke.pending_phase_transition
+            except Exception as e:
+                logger.error(f"Failed to get smoke status: {e}")
         
         return {
             "running": self.running,
@@ -528,7 +642,9 @@ class SmokerController:
             "last_loop_time": self.last_loop_time,
             "pid_state": self.pid.get_state(),
             "control_tc_id": self.control_tc_id,
-            "thermocouple_readings": tc_temps
+            "thermocouple_readings": tc_temps,
+            "current_phase": current_phase,
+            "pending_phase_transition": pending_phase_transition
         }
 
 

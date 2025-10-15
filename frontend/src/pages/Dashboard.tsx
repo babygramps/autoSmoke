@@ -19,8 +19,11 @@ import { Charts } from '../components/Charts'
 import { Controls } from '../components/Controls'
 import { Alarms } from '../components/Alarms'
 import { SmokeSession } from '../components/SmokeSession'
+import { PhaseProgress } from '../components/PhaseProgress'
+import { PhaseTransitionModal } from '../components/PhaseTransitionModal'
+import { EditPhaseDialog } from '../components/EditPhaseDialog'
 import { apiClient, useWebSocket } from '../api/client'
-import { ControllerStatus, Thermocouple } from '../types'
+import { ControllerStatus, Thermocouple, WebSocketMessage } from '../types'
 
 type TileSize = 'small' | 'medium' | 'large' | 'full'
 
@@ -158,6 +161,7 @@ const DEFAULT_LAYOUT = [
   'connection',
   'controls',
   'session',
+  'phases',
   'chart',
   'thermocouples',
   'alarms',
@@ -167,6 +171,7 @@ const DEFAULT_SIZES: Record<string, TileSize> = {
   connection: 'full',
   controls: 'medium',
   session: 'medium',
+  phases: 'medium',
   chart: 'large',
   thermocouples: 'full',
   alarms: 'full',
@@ -176,6 +181,7 @@ const DEFAULT_VISIBILITY: Record<string, boolean> = {
   connection: true,
   controls: true,
   session: true,
+  phases: true,
   chart: true,
   thermocouples: true,
   alarms: true,
@@ -200,6 +206,12 @@ export function Dashboard() {
   })
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
+  // Phase management state
+  const [showPhaseTransitionModal, setShowPhaseTransitionModal] = useState(false)
+  const [phaseTransitionData, setPhaseTransitionData] = useState<any>(null)
+  const [showEditPhaseDialog, setShowEditPhaseDialog] = useState(false)
+  const [editPhaseData, setEditPhaseData] = useState<any>(null)
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -210,10 +222,17 @@ export function Dashboard() {
   )
 
   // WebSocket connection
-  const { connect } = useWebSocket((data) => {
+  const { connect } = useWebSocket((data: WebSocketMessage) => {
     if (data.type === 'telemetry') {
       setStatus(data.data)
       setConnected(true)
+    } else if (data.type === 'phase_transition_ready') {
+      // Phase transition ready - show modal for user approval
+      setPhaseTransitionData(data.data)
+      setShowPhaseTransitionModal(true)
+    } else if (data.type === 'phase_started') {
+      // Phase started - refresh status
+      apiClient.getStatus().then(setStatus).catch(console.error)
     }
   })
 
@@ -331,6 +350,40 @@ export function Dashboard() {
       size: tileSizes.session || 'medium',
       visible: tileVisibility.session ?? true,
       component: <SmokeSession onSessionChange={handleSessionChange} />,
+    },
+    phases: {
+      id: 'phases',
+      title: 'Cooking Phases',
+      icon: '📋',
+      description: 'Track cooking phase progress',
+      size: tileSizes.phases || 'medium',
+      visible: tileVisibility.phases ?? true,
+      component: status?.active_smoke_id && status?.current_phase ? (
+        <PhaseProgress
+          smokeId={status.active_smoke_id}
+          currentPhase={status.current_phase}
+          onEditPhase={() => {
+            if (status?.current_phase) {
+              setEditPhaseData({
+                smokeId: status.active_smoke_id,
+                phaseId: status.current_phase.id,
+                phaseName: status.current_phase.phase_name,
+                currentTargetTemp: status.current_phase.target_temp_f,
+                currentConditions: status.current_phase.completion_conditions
+              })
+              setShowEditPhaseDialog(true)
+            }
+          }}
+        />
+      ) : (
+        <div className="card h-full flex items-center justify-center">
+          <div className="text-center text-gray-500 py-8">
+            <div className="text-4xl mb-2">📋</div>
+            <div className="text-sm">No active cooking phases</div>
+            <div className="text-xs mt-1">Create a session to see phase progress</div>
+          </div>
+        </div>
+      ),
     },
     chart: {
       id: 'chart',
@@ -644,6 +697,37 @@ export function Dashboard() {
             </span>
           </div>
         </div>
+      )}
+
+      {/* Phase Transition Modal */}
+      {phaseTransitionData && (
+        <PhaseTransitionModal
+          isOpen={showPhaseTransitionModal}
+          onClose={() => setShowPhaseTransitionModal(false)}
+          smokeId={phaseTransitionData.smoke_id}
+          reason={phaseTransitionData.reason}
+          currentPhase={phaseTransitionData.current_phase}
+          nextPhase={phaseTransitionData.next_phase}
+          onApproved={() => {
+            apiClient.getStatus().then(setStatus).catch(console.error)
+          }}
+        />
+      )}
+
+      {/* Edit Phase Dialog */}
+      {editPhaseData && (
+        <EditPhaseDialog
+          isOpen={showEditPhaseDialog}
+          onClose={() => setShowEditPhaseDialog(false)}
+          smokeId={editPhaseData.smokeId}
+          phaseId={editPhaseData.phaseId}
+          phaseName={editPhaseData.phaseName}
+          currentTargetTemp={editPhaseData.currentTargetTemp}
+          currentConditions={editPhaseData.currentConditions}
+          onUpdated={() => {
+            apiClient.getStatus().then(setStatus).catch(console.error)
+          }}
+        />
       )}
     </div>
   )

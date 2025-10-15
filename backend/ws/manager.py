@@ -86,6 +86,24 @@ class ConnectionManager:
         for connection in connections_to_remove:
             self.disconnect(connection)
     
+    async def broadcast_phase_event(self, event_type: str, data: Dict[str, Any]):
+        """
+        Broadcast a phase-related event to all connected clients.
+        
+        Event types:
+        - phase_transition_ready: Phase conditions met, awaiting approval
+        - phase_transition_approved: User approved, moving to next phase
+        - phase_started: New phase began
+        - phase_completed: Phase finished
+        """
+        message = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "type": event_type,
+            "data": data
+        }
+        await self.broadcast(json.dumps(message))
+        logger.info(f"Broadcasted phase event: {event_type}")
+    
     async def _broadcast_loop(self):
         """Main broadcast loop running at 1 Hz."""
         while self.running:
@@ -117,6 +135,8 @@ class ConnectionManager:
                         "loop_count": status["loop_count"],
                         "last_loop_time": status["last_loop_time"],
                         "thermocouple_readings": status["thermocouple_readings"],
+                        "current_phase": status.get("current_phase"),
+                        "pending_phase_transition": status.get("pending_phase_transition", False),
                         "alert_summary": alert_summary,
                         "alerts": [
                             {

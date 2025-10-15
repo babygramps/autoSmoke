@@ -10,6 +10,18 @@ CONTROL_MODE_THERMOSTAT = "thermostat"
 CONTROL_MODE_TIME_PROPORTIONAL = "time_proportional"
 
 
+class CookingRecipe(SQLModel, table=True):
+    """Preset cooking recipes/templates."""
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(description="Recipe name (e.g., Brisket, Ribs)", index=True)
+    description: Optional[str] = Field(default=None, description="Recipe description")
+    phases: str = Field(description="JSON array of phase configurations")
+    is_system: bool = Field(default=False, description="System preset vs user-created")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Smoke(SQLModel, table=True):
     """A smoking session - groups readings together."""
     
@@ -20,11 +32,34 @@ class Smoke(SQLModel, table=True):
     ended_at: Optional[datetime] = Field(default=None, description="When session ended")
     is_active: bool = Field(default=True, description="Whether this is the currently active session")
     
+    # Recipe/phase tracking
+    recipe_id: Optional[int] = Field(default=None, foreign_key="cookingrecipe.id", description="Link to recipe")
+    recipe_config: Optional[str] = Field(default=None, description="JSON snapshot of recipe at session start")
+    current_phase_id: Optional[int] = Field(default=None, description="Current active phase ID")
+    meat_target_temp_f: Optional[float] = Field(default=None, description="Target meat temperature")
+    meat_probe_tc_id: Optional[int] = Field(default=None, foreign_key="thermocouple.id", description="Meat probe thermocouple")
+    pending_phase_transition: bool = Field(default=False, description="Flag for awaiting user approval")
+    
     # Summary stats (computed when session ends)
     total_duration_minutes: Optional[int] = Field(default=None, description="Total session duration")
     avg_temp_f: Optional[float] = Field(default=None, description="Average temperature")
     min_temp_f: Optional[float] = Field(default=None, description="Minimum temperature")
     max_temp_f: Optional[float] = Field(default=None, description="Maximum temperature")
+
+
+class SmokePhase(SQLModel, table=True):
+    """Phase tracking for active smoke session."""
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    smoke_id: int = Field(foreign_key="smoke.id", index=True, description="Parent smoke session")
+    phase_name: str = Field(description="Phase name: preheat, load_recover, smoke, stall, finish_hold")
+    phase_order: int = Field(description="Order in sequence (0-indexed)")
+    target_temp_f: float = Field(description="Target temperature for this phase")
+    started_at: datetime = Field(default_factory=datetime.utcnow, description="When phase started")
+    ended_at: Optional[datetime] = Field(default=None, description="When phase ended")
+    is_active: bool = Field(default=False, description="Whether this is the currently active phase")
+    completion_conditions: str = Field(description="JSON with stability/time/temp conditions")
+    actual_duration_minutes: Optional[int] = Field(default=None, description="Actual phase duration")
 
 
 class Thermocouple(SQLModel, table=True):

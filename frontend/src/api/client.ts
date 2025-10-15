@@ -16,7 +16,11 @@ import {
   SmokeUpdate,
   Thermocouple,
   ThermocoupleCreate,
-  ThermocoupleUpdate
+  ThermocoupleUpdate,
+  CookingRecipe,
+  CookingPhase,
+  PhaseUpdate,
+  PhaseProgress
 } from '../types';
 
 const API_BASE = '/api';
@@ -252,6 +256,69 @@ class ApiClient {
 
   async readThermocoupleTemp(id: number): Promise<{ temp_c: number; temp_f: number; fault: boolean }> {
     return this.request(`/thermocouples/${id}/read_temp`, { method: 'POST' });
+  }
+
+  // Recipe endpoints
+  async getRecipes(includeUser: boolean = true): Promise<{ recipes: CookingRecipe[] }> {
+    return this.request(`/recipes?include_user=${includeUser}`);
+  }
+
+  async getRecipe(id: number): Promise<CookingRecipe> {
+    return this.request(`/recipes/${id}`);
+  }
+
+  async createRecipe(data: Omit<CookingRecipe, 'id' | 'created_at' | 'updated_at' | 'is_system'>): Promise<{ status: string; message: string; recipe: CookingRecipe }> {
+    return this.request('/recipes', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateRecipe(id: number, data: Partial<Omit<CookingRecipe, 'id' | 'created_at' | 'updated_at' | 'is_system'>>): Promise<{ status: string; message: string; recipe: CookingRecipe }> {
+    return this.request(`/recipes/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteRecipe(id: number): Promise<{ status: string; message: string }> {
+    return this.request(`/recipes/${id}`, { method: 'DELETE' });
+  }
+
+  async cloneRecipe(id: number, name?: string): Promise<{ status: string; message: string; recipe: CookingRecipe }> {
+    const body = name ? JSON.stringify({ name }) : undefined;
+    return this.request(`/recipes/${id}/clone`, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  // Phase endpoints
+  async getSmokePhases(smokeId: number): Promise<{ phases: CookingPhase[] }> {
+    return this.request(`/smokes/${smokeId}/phases`);
+  }
+
+  async approvePhaseTransition(smokeId: number): Promise<{ status: string; message: string; current_phase: any }> {
+    return this.request(`/smokes/${smokeId}/approve-phase-transition`, {
+      method: 'POST',
+    });
+  }
+
+  async updatePhase(smokeId: number, phaseId: number, data: PhaseUpdate): Promise<{ status: string; message: string }> {
+    return this.request(`/smokes/${smokeId}/phases/${phaseId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async skipPhase(smokeId: number): Promise<{ status: string; message: string; current_phase: any }> {
+    return this.request(`/smokes/${smokeId}/skip-phase`, {
+      method: 'POST',
+    });
+  }
+
+  async getPhaseProgress(smokeId: number): Promise<PhaseProgress> {
+    return this.request(`/smokes/${smokeId}/phase-progress`);
   }
 }
 
