@@ -32,6 +32,7 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
   const [finishTemp, setFinishTemp] = useState(160)
   const [preheatDuration, setPreheatDuration] = useState(60)
   const [preheatStability, setPreheatStability] = useState(10)
+  const [stabilityRange, setStabilityRange] = useState(5)  // ±5°F default
   const [cookDuration, setCookDuration] = useState(360)  // 6 hours default
   const [finishDuration, setFinishDuration] = useState(120)  // 2 hours default
   const [meatTargetTemp, setMeatTargetTemp] = useState<number | undefined>(undefined)
@@ -106,6 +107,7 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
         finish_temp_f: finishTemp,
         preheat_duration_min: preheatDuration,
         preheat_stability_min: preheatStability,
+        stability_range_f: stabilityRange,
         cook_duration_min: cookDuration,
         finish_duration_min: finishDuration,
         meat_target_temp_f: meatTargetTemp,
@@ -395,7 +397,7 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
             {/* Preheat Timing */}
             <div className="mb-4">
               <div className="text-xs font-medium text-gray-600 mb-2">Preheat Phase</div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">
                     Max Time (min)
@@ -421,6 +423,22 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
                     min={3}
                     max={30}
                   />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Stability (±°F)
+                  </label>
+                  <input
+                    type="number"
+                    value={stabilityRange}
+                    onChange={(e) => setStabilityRange(Number(e.target.value))}
+                    className="input"
+                    min={1}
+                    max={20}
+                  />
+                  <div className="text-xs text-gray-500 mt-1">
+                    Temp must stay within ±{stabilityRange}°F
+                  </div>
                 </div>
               </div>
             </div>

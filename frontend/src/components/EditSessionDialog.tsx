@@ -28,6 +28,7 @@ export function EditSessionDialog({
   // Phase timing
   const [preheatDuration, setPreheatDuration] = useState<number>(60)  // max duration in minutes
   const [preheatStability, setPreheatStability] = useState<number>(10)  // stability hold time in minutes
+  const [stabilityRange, setStabilityRange] = useState<number>(5)  // stability range ±°F
   const [cookDuration, setCookDuration] = useState<number>(360)  // cook phase max duration (6 hours)
   const [finishDuration, setFinishDuration] = useState<number>(120)  // finish phase max duration (2 hours)
   
@@ -61,6 +62,7 @@ export function EditSessionDialog({
       setFinishTemp(smokeAny.finish_temp_f || 160)
       setPreheatDuration(smokeAny.preheat_duration_min || 60)
       setPreheatStability(smokeAny.preheat_stability_min || 10)
+      setStabilityRange(smokeAny.stability_range_f || 5)
       setCookDuration(smokeAny.cook_duration_min || 360)
       setFinishDuration(smokeAny.finish_duration_min || 120)
       setEnableStallDetection(smokeAny.enable_stall_detection !== false) // default true
@@ -89,6 +91,7 @@ export function EditSessionDialog({
         enable_stall_detection: enableStallDetection,
         preheat_duration_min: preheatDuration,
         preheat_stability_min: preheatStability,
+        stability_range_f: stabilityRange,
         cook_duration_min: cookDuration,
         finish_duration_min: finishDuration
       })
@@ -224,7 +227,7 @@ export function EditSessionDialog({
                 {/* Preheat Timing */}
                 <div>
                   <div className="text-xs font-semibold text-gray-700 mb-2">Preheat Phase</div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">
                         Max Time (min)
@@ -250,6 +253,20 @@ export function EditSessionDialog({
                         className="input"
                         min={3}
                         max={30}
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">
+                        Stability (±°F)
+                      </label>
+                      <input
+                        type="number"
+                        value={stabilityRange}
+                        onChange={(e) => setStabilityRange(Number(e.target.value))}
+                        className="input"
+                        min={1}
+                        max={20}
                         disabled={loading}
                       />
                     </div>

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Recreate database with new schema including Smoke sessions.
+Recreate database with new schema.
 WARNING: This will delete all data!
 """
 
@@ -8,8 +8,18 @@ import sys
 from pathlib import Path
 from sqlmodel import SQLModel, create_engine
 
-# Import all models
-from db.models import Smoke, Reading, Alert, Event, Settings
+# Import all models to ensure they're registered with SQLModel
+from db.models import (
+    CookingRecipe,
+    Smoke, 
+    SmokePhase,
+    Thermocouple,
+    Reading, 
+    ThermocoupleReading,
+    Alert, 
+    Event, 
+    Settings
+)
 
 
 def recreate_database(db_path: str = "./smoker.db"):
@@ -32,7 +42,16 @@ def recreate_database(db_path: str = "./smoker.db"):
     SQLModel.metadata.create_all(engine)
     
     print("✓ Database recreated with new schema!")
-    print("  Tables created: smoke, reading, alert, event, settings")
+    print("  Tables created:")
+    print("    - cookingrecipe (recipe templates)")
+    print("    - smoke (smoke sessions)")
+    print("    - smokephase (cooking phases)")
+    print("    - thermocouple (thermocouple config)")
+    print("    - reading (temperature readings)")
+    print("    - thermocouplereadings (individual TC readings)")
+    print("    - alert (alerts and alarms)")
+    print("    - event (system events)")
+    print("    - settings (system settings)")
 
 
 if __name__ == "__main__":

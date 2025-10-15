@@ -296,6 +296,7 @@ export interface SmokeCreate {
   enable_stall_detection?: boolean;
   preheat_duration_min?: number;
   preheat_stability_min?: number;
+  stability_range_f?: number;
   cook_duration_min?: number;
   finish_duration_min?: number;
 }
@@ -311,6 +312,7 @@ export interface SmokeUpdate {
   enable_stall_detection?: boolean;
   preheat_duration_min?: number;
   preheat_stability_min?: number;
+  stability_range_f?: number;
   cook_duration_min?: number;
   finish_duration_min?: number;
 }

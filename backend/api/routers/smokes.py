@@ -33,6 +33,7 @@ class SmokeCreate(BaseModel):
     # Phase timing controls
     preheat_duration_min: int = 60  # Maximum preheat time
     preheat_stability_min: int = 10  # How long to hold stable before advancing
+    stability_range_f: float = 5.0  # Temperature stability range (±°F)
     cook_duration_min: int = 360  # Maximum cook phase time (6 hours default)
     finish_duration_min: int = 120  # Maximum finish phase time (2 hours default)
 
@@ -49,6 +50,7 @@ class SmokeUpdate(BaseModel):
     # Phase timing controls
     preheat_duration_min: Optional[int] = None
     preheat_stability_min: Optional[int] = None
+    stability_range_f: Optional[float] = None
     cook_duration_min: Optional[int] = None
     finish_duration_min: Optional[int] = None
 
@@ -188,9 +190,13 @@ async def create_smoke(smoke_create: SmokeCreate):
                 if phase_config["phase_name"] == "preheat":
                     conditions["max_duration_min"] = smoke_create.preheat_duration_min
                     conditions["stability_duration_min"] = smoke_create.preheat_stability_min
+                    conditions["stability_range_f"] = smoke_create.stability_range_f
                 elif phase_config["phase_name"] in ["load_recover", "smoke"]:
                     # Cook phases use cook_duration_min
                     conditions["max_duration_min"] = smoke_create.cook_duration_min
+                    # Apply stability range to load_recover phase as well
+                    if "stability_range_f" in conditions:
+                        conditions["stability_range_f"] = smoke_create.stability_range_f
                 elif phase_config["phase_name"] == "finish_hold":
                     conditions["max_duration_min"] = smoke_create.finish_duration_min
                 
@@ -320,6 +326,10 @@ async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
                     config["preheat_stability_min"] = smoke_update.preheat_stability_min
                     config_updated = True
                     updates.append(f"preheat_stability={smoke_update.preheat_stability_min}min")
+                if smoke_update.stability_range_f is not None:
+                    config["stability_range_f"] = smoke_update.stability_range_f
+                    config_updated = True
+                    updates.append(f"stability_range=±{smoke_update.stability_range_f}°F")
                 if smoke_update.cook_duration_min is not None:
                     config["cook_duration_min"] = smoke_update.cook_duration_min
                     config_updated = True
@@ -352,9 +362,12 @@ async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
                             if smoke_update.preheat_stability_min is not None:
                                 conditions["stability_duration_min"] = smoke_update.preheat_stability_min
                                 timing_updated = True
+                            if smoke_update.stability_range_f is not None:
+                                conditions["stability_range_f"] = smoke_update.stability_range_f
+                                timing_updated = True
                             if timing_updated:
                                 phase.completion_conditions = json.dumps(conditions)
-                                logger.info(f"Updated preheat phase timing: max={conditions.get('max_duration_min')}min, stability={conditions.get('stability_duration_min')}min")
+                                logger.info(f"Updated preheat phase timing: max={conditions.get('max_duration_min')}min, stability={conditions.get('stability_duration_min')}min, range=±{conditions.get('stability_range_f')}°F")
                         
                         elif phase.phase_name in ["load_recover", "smoke"]:
                             if smoke_update.cook_duration_min is not None:

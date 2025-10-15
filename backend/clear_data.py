@@ -23,36 +23,60 @@ def clear_data(db_path: str = "./smoker.db"):
     cursor = conn.cursor()
     
     try:
+        # Helper function to safely get count
+        def safe_count(table_name):
+            try:
+                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                return cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                return 0  # Table doesn't exist
+        
+        # Helper function to safely delete
+        def safe_delete(table_name):
+            try:
+                cursor.execute(f"DELETE FROM {table_name}")
+                return True
+            except sqlite3.OperationalError:
+                return False  # Table doesn't exist
+        
         # Get counts before deletion
-        cursor.execute("SELECT COUNT(*) FROM reading")
-        reading_count = cursor.fetchone()[0]
+        reading_count = safe_count("reading")
+        tc_reading_count = safe_count("thermocouplereadings")
+        alert_count = safe_count("alert")
+        event_count = safe_count("event")
+        smoke_count = safe_count("smoke")
+        phase_count = safe_count("smokephase")
         
-        cursor.execute("SELECT COUNT(*) FROM alert")
-        alert_count = cursor.fetchone()[0]
+        print(f"  Found {reading_count} readings, {tc_reading_count} thermocouple readings")
+        print(f"  Found {alert_count} alerts, {event_count} events")
+        print(f"  Found {smoke_count} smoke sessions, {phase_count} smoke phases")
         
-        cursor.execute("SELECT COUNT(*) FROM event")
-        event_count = cursor.fetchone()[0]
+        # Delete data (in order to respect foreign key constraints)
+        tables_to_clear = [
+            "thermocouplereadings",  # References reading
+            "reading",               # References smoke
+            "smokephase",            # References smoke
+            "smoke",                 # Parent table
+            "alert",                 # Independent
+            "event",                 # Independent
+        ]
         
-        cursor.execute("SELECT COUNT(*) FROM smoke")
-        smoke_count = cursor.fetchone()[0]
+        deleted_tables = []
+        for table in tables_to_clear:
+            if safe_delete(table):
+                deleted_tables.append(table)
         
-        print(f"  Found {reading_count} readings, {alert_count} alerts, {event_count} events, {smoke_count} smoke sessions")
-        
-        # Delete data (readings first since they reference smokes)
-        cursor.execute("DELETE FROM reading")
-        cursor.execute("DELETE FROM alert")
-        cursor.execute("DELETE FROM event")
-        cursor.execute("DELETE FROM smoke")
+        print(f"  Cleared tables: {', '.join(deleted_tables)}")
         
         # Reset autoincrement counters (if table exists)
         try:
-            cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('reading', 'alert', 'event', 'smoke')")
+            cursor.execute(f"DELETE FROM sqlite_sequence WHERE name IN ({','.join(['?' for _ in deleted_tables])})", deleted_tables)
         except sqlite3.OperationalError:
             pass  # sqlite_sequence doesn't exist yet
         
         conn.commit()
         print("✓ All data cleared successfully!")
-        print("  Settings have been preserved")
+        print("  Settings, thermocouples, and recipes have been preserved")
         
     except sqlite3.Error as e:
         print(f"✗ Failed to clear data: {e}")
