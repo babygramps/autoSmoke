@@ -160,6 +160,17 @@ class SmokerController:
                 if active_smoke:
                     self.active_smoke_id = active_smoke.id
                     logger.info(f"Loaded active smoke session: {active_smoke.name} (ID: {active_smoke.id})")
+                    
+                    # Load current phase and apply its setpoint
+                    try:
+                        from core.phase_manager import phase_manager
+                        current_phase = phase_manager.get_current_phase(active_smoke.id)
+                        
+                        if current_phase:
+                            self.set_setpoint(current_phase.target_temp_f)
+                            logger.info(f"Applied phase setpoint from loaded session: {current_phase.phase_name} @ {current_phase.target_temp_f}°F")
+                    except Exception as e:
+                        logger.warning(f"Failed to load phase settings for loaded session: {e}")
                 else:
                     logger.info("No active smoke session found")
         except Exception as e:
@@ -167,15 +178,41 @@ class SmokerController:
             self.active_smoke_id = None
     
     def set_active_smoke(self, smoke_id: int):
-        """Set the active smoking session."""
+        """Set the active smoking session and load phase settings."""
         self.active_smoke_id = smoke_id
         logger.info(f"Active smoke session set to ID: {smoke_id}")
+        
+        # Load current phase and apply its setpoint
+        try:
+            from core.phase_manager import phase_manager
+            current_phase = phase_manager.get_current_phase(smoke_id)
+            
+            if current_phase:
+                # Set controller setpoint to current phase target
+                self.set_setpoint(current_phase.target_temp_f)
+                logger.info(f"Applied phase setpoint: {current_phase.phase_name} @ {current_phase.target_temp_f}°F")
+            else:
+                logger.warning(f"No active phase found for smoke {smoke_id}, setpoint not changed")
+        except Exception as e:
+            logger.error(f"Failed to load phase settings for smoke {smoke_id}: {e}")
     
     async def start(self):
         """Start the control loop."""
         if self.running:
             logger.warning("Controller already running")
             return
+        
+        # If there's an active session, load phase settings before starting
+        if self.active_smoke_id:
+            try:
+                from core.phase_manager import phase_manager
+                current_phase = phase_manager.get_current_phase(self.active_smoke_id)
+                
+                if current_phase:
+                    self.set_setpoint(current_phase.target_temp_f)
+                    logger.info(f"Starting with phase setpoint: {current_phase.phase_name} @ {current_phase.target_temp_f}°F")
+            except Exception as e:
+                logger.warning(f"Failed to load phase settings on start: {e}")
         
         self.running = True
         self._control_task = asyncio.create_task(self._control_loop())

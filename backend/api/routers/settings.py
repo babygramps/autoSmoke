@@ -1,5 +1,6 @@
 """Settings API endpoints."""
 
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -9,6 +10,7 @@ from db.session import get_session_sync
 from core.controller import controller
 from core.config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -117,7 +119,23 @@ async def update_settings(settings_update: SettingsUpdate):
             # These only matter when controller is running
             if controller.running:
                 if settings_update.setpoint_f is not None:
-                    await controller.set_setpoint(settings_update.setpoint_f)
+                    # Check if there's an active session with phases - if so, don't override phase setpoint
+                    if controller.active_smoke_id:
+                        try:
+                            from core.phase_manager import phase_manager
+                            current_phase = phase_manager.get_current_phase(controller.active_smoke_id)
+                            if current_phase:
+                                logger.warning(f"Ignoring setpoint update - active phase controls setpoint: {current_phase.phase_name} @ {current_phase.target_temp_f}°F")
+                                # Update DB but don't apply to controller
+                            else:
+                                # No active phase, safe to update
+                                await controller.set_setpoint(settings_update.setpoint_f)
+                        except Exception as e:
+                            logger.warning(f"Error checking for active phase: {e}, applying setpoint update anyway")
+                            await controller.set_setpoint(settings_update.setpoint_f)
+                    else:
+                        # No active session, safe to update
+                        await controller.set_setpoint(settings_update.setpoint_f)
                 
                 if any(field in update_data for field in ['kp', 'ki', 'kd']):
                     kp = settings_update.kp or db_settings.kp

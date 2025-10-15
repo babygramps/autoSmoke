@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiClient } from '../api/client'
 import { Smoke, CookingRecipe, Thermocouple } from '../types'
+import { EditSessionDialog } from './EditSessionDialog'
 
 interface SmokeSessionProps {
   onSessionChange?: () => void
@@ -20,12 +21,19 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
   const [thermocouples, setThermocouples] = useState<Thermocouple[]>([])
   const [selectedRecipe, setSelectedRecipe] = useState<CookingRecipe | null>(null)
   
+  // Edit session dialog
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  
   // Session parameters
   const [newSmokeName, setNewSmokeName] = useState('')
   const [newSmokeDescription, setNewSmokeDescription] = useState('')
   const [preheatTemp, setPreheatTemp] = useState(270)
   const [cookTemp, setCookTemp] = useState(225)
   const [finishTemp, setFinishTemp] = useState(160)
+  const [preheatDuration, setPreheatDuration] = useState(60)
+  const [preheatStability, setPreheatStability] = useState(10)
+  const [cookDuration, setCookDuration] = useState(360)  // 6 hours default
+  const [finishDuration, setFinishDuration] = useState(120)  // 2 hours default
   const [meatTargetTemp, setMeatTargetTemp] = useState<number | undefined>(undefined)
   const [meatProbeId, setMeatProbeId] = useState<number | undefined>(undefined)
   const [enableStallDetection, setEnableStallDetection] = useState(true)
@@ -36,6 +44,11 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
       setSmokes(data.smokes)
       const active = data.smokes.find(s => s.is_active)
       setActiveSmoke(active || null)
+      
+      // Load thermocouples if we have an active session (for edit dialog)
+      if (active && thermocouples.length === 0) {
+        loadThermocouples()
+      }
     } catch (error) {
       console.error('Failed to load smokes:', error)
     }
@@ -91,6 +104,10 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
         preheat_temp_f: preheatTemp,
         cook_temp_f: cookTemp,
         finish_temp_f: finishTemp,
+        preheat_duration_min: preheatDuration,
+        preheat_stability_min: preheatStability,
+        cook_duration_min: cookDuration,
+        finish_duration_min: finishDuration,
         meat_target_temp_f: meatTargetTemp,
         meat_probe_tc_id: meatProbeId,
         enable_stall_detection: enableStallDetection
@@ -154,20 +171,29 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
         {activeSmoke ? (
           <div className="mb-4 p-4 bg-primary-50 rounded-lg border-2 border-primary-200">
             <div className="flex items-center justify-between mb-2">
-              <div>
+              <div className="flex-1">
                 <div className="text-sm font-medium text-primary-900">🔥 Active Session</div>
                 <div className="text-xl font-bold text-primary-900">{activeSmoke.name}</div>
                 {activeSmoke.description && (
                   <div className="text-sm text-primary-700 mt-1">{activeSmoke.description}</div>
                 )}
               </div>
-              <button
-                onClick={handleEndSmoke}
-                disabled={loading}
-                className="btn btn-danger btn-sm disabled:opacity-50"
-              >
-                End Session
-              </button>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => setShowEditDialog(true)}
+                  disabled={loading}
+                  className="btn btn-outline btn-sm disabled:opacity-50"
+                >
+                  ⚙️ Edit Settings
+                </button>
+                <button
+                  onClick={handleEndSmoke}
+                  disabled={loading}
+                  className="btn btn-danger btn-sm disabled:opacity-50"
+                >
+                  End Session
+                </button>
+              </div>
             </div>
             <div className="text-xs text-primary-700">
               Started: {new Date(activeSmoke.started_at).toLocaleString()}
@@ -226,6 +252,20 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
               ))}
             </div>
           </div>
+        )}
+
+        {/* Edit Session Dialog */}
+        {activeSmoke && (
+          <EditSessionDialog
+            isOpen={showEditDialog}
+            onClose={() => setShowEditDialog(false)}
+            smoke={activeSmoke}
+            thermocouples={thermocouples}
+            onUpdated={() => {
+              loadSmokes()
+              if (onSessionChange) onSessionChange()
+            }}
+          />
         )}
       </div>
     )
@@ -345,6 +385,88 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
                 min={140}
                 max={200}
               />
+            </div>
+          </div>
+
+          {/* Phase Timing Controls */}
+          <div className="border-t pt-4">
+            <div className="text-sm font-medium text-gray-700 mb-3">⏱️ Phase Timing</div>
+            
+            {/* Preheat Timing */}
+            <div className="mb-4">
+              <div className="text-xs font-medium text-gray-600 mb-2">Preheat Phase</div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Max Time (min)
+                  </label>
+                  <input
+                    type="number"
+                    value={preheatDuration}
+                    onChange={(e) => setPreheatDuration(Number(e.target.value))}
+                    className="input"
+                    min={15}
+                    max={120}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Hold Stable (min)
+                  </label>
+                  <input
+                    type="number"
+                    value={preheatStability}
+                    onChange={(e) => setPreheatStability(Number(e.target.value))}
+                    className="input"
+                    min={3}
+                    max={30}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Cook Phase Timing */}
+            <div className="mb-4">
+              <div className="text-xs font-medium text-gray-600 mb-2">Cook Phase (Load & Smoke)</div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">
+                  Max Duration (min)
+                </label>
+                <input
+                  type="number"
+                  value={cookDuration}
+                  onChange={(e) => setCookDuration(Number(e.target.value))}
+                  className="input"
+                  min={60}
+                  max={720}
+                  step={30}
+                />
+                <div className="text-xs text-gray-500 mt-1">
+                  Default: 360 min (6 hours)
+                </div>
+              </div>
+            </div>
+
+            {/* Finish Phase Timing */}
+            <div>
+              <div className="text-xs font-medium text-gray-600 mb-2">Finish & Hold Phase</div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">
+                  Max Duration (min)
+                </label>
+                <input
+                  type="number"
+                  value={finishDuration}
+                  onChange={(e) => setFinishDuration(Number(e.target.value))}
+                  className="input"
+                  min={30}
+                  max={360}
+                  step={15}
+                />
+                <div className="text-xs text-gray-500 mt-1">
+                  Default: 120 min (2 hours)
+                </div>
+              </div>
             </div>
           </div>
 

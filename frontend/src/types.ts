@@ -13,6 +13,12 @@ export interface Smoke {
   avg_temp_f: number | null;
   min_temp_f: number | null;
   max_temp_f: number | null;
+  recipe_id?: number | null;
+  recipe_config?: string | null;
+  current_phase_id?: number | null;
+  meat_target_temp_f?: number | null;
+  meat_probe_tc_id?: number | null;
+  pending_phase_transition?: boolean;
 }
 
 export interface Reading {
@@ -287,11 +293,25 @@ export interface SmokeCreate {
   meat_target_temp_f?: number;
   meat_probe_tc_id?: number;
   enable_stall_detection?: boolean;
+  preheat_duration_min?: number;
+  preheat_stability_min?: number;
+  cook_duration_min?: number;
+  finish_duration_min?: number;
 }
 
 export interface SmokeUpdate {
   name?: string;
   description?: string;
+  meat_target_temp_f?: number;
+  meat_probe_tc_id?: number;
+  preheat_temp_f?: number;
+  cook_temp_f?: number;
+  finish_temp_f?: number;
+  enable_stall_detection?: boolean;
+  preheat_duration_min?: number;
+  preheat_stability_min?: number;
+  cook_duration_min?: number;
+  finish_duration_min?: number;
 }
 
 export interface PhaseUpdate {

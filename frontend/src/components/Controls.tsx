@@ -161,6 +161,14 @@ export function Controls({ status, onStatusUpdate }: ControlsProps) {
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Setpoint Temperature
           </label>
+          
+          {/* Warning if phases are controlling setpoint */}
+          {status?.current_phase && (
+            <div className="mb-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
+              <span className="font-medium">⚠️ Phase Control Active:</span> Setpoint is managed by cooking phase "{status.current_phase.phase_name}" ({status.current_phase.target_temp_f}°F)
+            </div>
+          )}
+          
           <div className="flex items-center space-x-2">
             <input
               type="number"
@@ -173,12 +181,15 @@ export function Controls({ status, onStatusUpdate }: ControlsProps) {
               min="100"
               max="400"
               step="1"
+              disabled={!!status?.current_phase}
+              title={status?.current_phase ? "Setpoint is controlled by active cooking phase" : ""}
             />
             <span className="text-sm text-gray-500">°F</span>
             <button
               onClick={handleSetpointChange}
-              disabled={loading}
+              disabled={loading || !!status?.current_phase}
               className="btn btn-primary disabled:opacity-50"
+              title={status?.current_phase ? "Cannot change setpoint during active cooking phase" : ""}
             >
               Update
             </button>

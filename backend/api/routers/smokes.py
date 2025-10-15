@@ -30,11 +30,27 @@ class SmokeCreate(BaseModel):
     meat_target_temp_f: Optional[float] = None
     meat_probe_tc_id: Optional[int] = None
     enable_stall_detection: bool = True
+    # Phase timing controls
+    preheat_duration_min: int = 60  # Maximum preheat time
+    preheat_stability_min: int = 10  # How long to hold stable before advancing
+    cook_duration_min: int = 360  # Maximum cook phase time (6 hours default)
+    finish_duration_min: int = 120  # Maximum finish phase time (2 hours default)
 
 
 class SmokeUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    meat_target_temp_f: Optional[float] = None
+    meat_probe_tc_id: Optional[int] = None
+    preheat_temp_f: Optional[float] = None
+    cook_temp_f: Optional[float] = None
+    finish_temp_f: Optional[float] = None
+    enable_stall_detection: Optional[bool] = None
+    # Phase timing controls
+    preheat_duration_min: Optional[int] = None
+    preheat_stability_min: Optional[int] = None
+    cook_duration_min: Optional[int] = None
+    finish_duration_min: Optional[int] = None
 
 
 class PhaseUpdate(BaseModel):
@@ -123,13 +139,26 @@ async def create_smoke(smoke_create: SmokeCreate):
                     active_smoke.ended_at = datetime.utcnow()
                     await _compute_smoke_stats(session, active_smoke)
             
+            # Create session configuration with user customizations
+            session_config = {
+                "recipe_phases": recipe.phases,
+                "preheat_temp_f": smoke_create.preheat_temp_f,
+                "cook_temp_f": smoke_create.cook_temp_f,
+                "finish_temp_f": smoke_create.finish_temp_f,
+                "enable_stall_detection": smoke_create.enable_stall_detection,
+                "preheat_duration_min": smoke_create.preheat_duration_min,
+                "preheat_stability_min": smoke_create.preheat_stability_min,
+                "cook_duration_min": smoke_create.cook_duration_min,
+                "finish_duration_min": smoke_create.finish_duration_min
+            }
+            
             # Create new smoke session
             smoke = Smoke(
                 name=smoke_create.name,
                 description=smoke_create.description,
                 is_active=True,
                 recipe_id=recipe.id,
-                recipe_config=recipe.phases,  # Store snapshot of recipe config
+                recipe_config=json.dumps(session_config),  # Store snapshot with customizations
                 meat_target_temp_f=smoke_create.meat_target_temp_f,
                 meat_probe_tc_id=smoke_create.meat_probe_tc_id,
                 pending_phase_transition=False
@@ -152,8 +181,20 @@ async def create_smoke(smoke_create: SmokeCreate):
                 elif phase_config["phase_name"] == "finish_hold":
                     target_temp_f = smoke_create.finish_temp_f
                 
-                # Adjust completion conditions if stall detection is disabled
+                # Adjust completion conditions
                 conditions = phase_config["completion_conditions"].copy()
+                
+                # Apply phase timing customizations
+                if phase_config["phase_name"] == "preheat":
+                    conditions["max_duration_min"] = smoke_create.preheat_duration_min
+                    conditions["stability_duration_min"] = smoke_create.preheat_stability_min
+                elif phase_config["phase_name"] in ["load_recover", "smoke"]:
+                    # Cook phases use cook_duration_min
+                    conditions["max_duration_min"] = smoke_create.cook_duration_min
+                elif phase_config["phase_name"] == "finish_hold":
+                    conditions["max_duration_min"] = smoke_create.finish_duration_min
+                
+                # Disable stall phase if stall detection is off
                 if not smoke_create.enable_stall_detection and phase_config["phase_name"] == "stall":
                     # Skip stall phase by setting very short duration
                     conditions["max_duration_min"] = 1
@@ -215,20 +256,172 @@ async def create_smoke(smoke_create: SmokeCreate):
 
 @router.put("/{smoke_id}")
 async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
-    """Update a smoke session."""
+    """Update a smoke session and its phase configurations."""
     try:
         with get_session_sync() as session:
             smoke = session.get(Smoke, smoke_id)
             if not smoke:
                 raise HTTPException(status_code=404, detail="Smoke session not found")
             
+            # Track what's being updated for logging
+            updates = []
+            
+            # Update basic fields
             if smoke_update.name is not None:
                 smoke.name = smoke_update.name
+                updates.append(f"name='{smoke_update.name}'")
             if smoke_update.description is not None:
                 smoke.description = smoke_update.description
+                updates.append("description")
+            if smoke_update.meat_target_temp_f is not None:
+                smoke.meat_target_temp_f = smoke_update.meat_target_temp_f
+                updates.append(f"meat_target={smoke_update.meat_target_temp_f}°F")
+            if smoke_update.meat_probe_tc_id is not None:
+                smoke.meat_probe_tc_id = smoke_update.meat_probe_tc_id
+                updates.append(f"meat_probe_tc={smoke_update.meat_probe_tc_id}")
+            
+            # Update temperature presets and stall detection in recipe_config
+            config_updated = False
+            if smoke.recipe_config:
+                try:
+                    config = json.loads(smoke.recipe_config)
+                except json.JSONDecodeError:
+                    # Old format: just recipe phases string, create new config
+                    config = {
+                        "recipe_phases": smoke.recipe_config,
+                        "preheat_temp_f": 270.0,
+                        "cook_temp_f": 225.0,
+                        "finish_temp_f": 160.0,
+                        "enable_stall_detection": True
+                    }
+                
+                # Update temperature settings in config
+                if smoke_update.preheat_temp_f is not None:
+                    config["preheat_temp_f"] = smoke_update.preheat_temp_f
+                    config_updated = True
+                    updates.append(f"preheat={smoke_update.preheat_temp_f}°F")
+                if smoke_update.cook_temp_f is not None:
+                    config["cook_temp_f"] = smoke_update.cook_temp_f
+                    config_updated = True
+                    updates.append(f"cook={smoke_update.cook_temp_f}°F")
+                if smoke_update.finish_temp_f is not None:
+                    config["finish_temp_f"] = smoke_update.finish_temp_f
+                    config_updated = True
+                    updates.append(f"finish={smoke_update.finish_temp_f}°F")
+                if smoke_update.enable_stall_detection is not None:
+                    config["enable_stall_detection"] = smoke_update.enable_stall_detection
+                    config_updated = True
+                    updates.append(f"stall_detection={smoke_update.enable_stall_detection}")
+                if smoke_update.preheat_duration_min is not None:
+                    config["preheat_duration_min"] = smoke_update.preheat_duration_min
+                    config_updated = True
+                    updates.append(f"preheat_duration={smoke_update.preheat_duration_min}min")
+                if smoke_update.preheat_stability_min is not None:
+                    config["preheat_stability_min"] = smoke_update.preheat_stability_min
+                    config_updated = True
+                    updates.append(f"preheat_stability={smoke_update.preheat_stability_min}min")
+                if smoke_update.cook_duration_min is not None:
+                    config["cook_duration_min"] = smoke_update.cook_duration_min
+                    config_updated = True
+                    updates.append(f"cook_duration={smoke_update.cook_duration_min}min")
+                if smoke_update.finish_duration_min is not None:
+                    config["finish_duration_min"] = smoke_update.finish_duration_min
+                    config_updated = True
+                    updates.append(f"finish_duration={smoke_update.finish_duration_min}min")
+                
+                if config_updated:
+                    smoke.recipe_config = json.dumps(config)
+                    
+                    # Update corresponding phase temperatures and timing
+                    statement = select(SmokePhase).where(SmokePhase.smoke_id == smoke_id)
+                    phases = session.exec(statement).all()
+                    
+                    for phase in phases:
+                        if smoke_update.preheat_temp_f is not None and phase.phase_name == "preheat":
+                            phase.target_temp_f = smoke_update.preheat_temp_f
+                            logger.info(f"Updated preheat phase target to {smoke_update.preheat_temp_f}°F")
+                        
+                        # Update phase timing
+                        conditions = json.loads(phase.completion_conditions)
+                        timing_updated = False
+                        
+                        if phase.phase_name == "preheat":
+                            if smoke_update.preheat_duration_min is not None:
+                                conditions["max_duration_min"] = smoke_update.preheat_duration_min
+                                timing_updated = True
+                            if smoke_update.preheat_stability_min is not None:
+                                conditions["stability_duration_min"] = smoke_update.preheat_stability_min
+                                timing_updated = True
+                            if timing_updated:
+                                phase.completion_conditions = json.dumps(conditions)
+                                logger.info(f"Updated preheat phase timing: max={conditions.get('max_duration_min')}min, stability={conditions.get('stability_duration_min')}min")
+                        
+                        elif phase.phase_name in ["load_recover", "smoke"]:
+                            if smoke_update.cook_duration_min is not None:
+                                conditions["max_duration_min"] = smoke_update.cook_duration_min
+                                timing_updated = True
+                            if timing_updated:
+                                phase.completion_conditions = json.dumps(conditions)
+                                logger.info(f"Updated {phase.phase_name} phase duration: max={conditions.get('max_duration_min')}min")
+                        
+                        elif phase.phase_name == "finish_hold":
+                            if smoke_update.finish_duration_min is not None:
+                                conditions["max_duration_min"] = smoke_update.finish_duration_min
+                                timing_updated = True
+                            if timing_updated:
+                                phase.completion_conditions = json.dumps(conditions)
+                                logger.info(f"Updated finish phase duration: max={conditions.get('max_duration_min')}min")
+                        elif smoke_update.cook_temp_f is not None and phase.phase_name in ["load_recover", "smoke"]:
+                            phase.target_temp_f = smoke_update.cook_temp_f
+                            logger.info(f"Updated {phase.phase_name} phase target to {smoke_update.cook_temp_f}°F")
+                        elif smoke_update.finish_temp_f is not None and phase.phase_name == "finish_hold":
+                            phase.target_temp_f = smoke_update.finish_temp_f
+                            logger.info(f"Updated finish phase target to {smoke_update.finish_temp_f}°F")
+                        
+                        # Update stall phase if stall detection changed
+                        if smoke_update.enable_stall_detection is not None and phase.phase_name == "stall":
+                            conditions = json.loads(phase.completion_conditions)
+                            if not smoke_update.enable_stall_detection:
+                                # Disable stall phase by setting very short duration
+                                conditions["max_duration_min"] = 1
+                            else:
+                                # Re-enable with normal duration (45-120 min typical)
+                                conditions["max_duration_min"] = 120
+                            phase.completion_conditions = json.dumps(conditions)
+                            logger.info(f"Updated stall phase: enabled={smoke_update.enable_stall_detection}")
+                    
+                    # If current phase was updated, update controller setpoint
+                    if smoke.current_phase_id:
+                        current_phase = session.get(SmokePhase, smoke.current_phase_id)
+                        if current_phase and current_phase.is_active:
+                            from core.controller import controller
+                            await controller.set_setpoint(current_phase.target_temp_f)
+                            logger.info(f"Updated controller setpoint to {current_phase.target_temp_f}°F for active phase")
             
             session.commit()
             session.refresh(smoke)
+            
+            # Log all updates
+            if updates:
+                logger.info(f"Updated smoke session {smoke_id}: {', '.join(updates)}")
+            
+            # Parse config for response
+            config_data = {}
+            if smoke.recipe_config:
+                try:
+                    config = json.loads(smoke.recipe_config)
+                    config_data = {
+                        "preheat_temp_f": config.get("preheat_temp_f"),
+                        "cook_temp_f": config.get("cook_temp_f"),
+                        "finish_temp_f": config.get("finish_temp_f"),
+                        "enable_stall_detection": config.get("enable_stall_detection"),
+                        "preheat_duration_min": config.get("preheat_duration_min"),
+                        "preheat_stability_min": config.get("preheat_stability_min"),
+                        "cook_duration_min": config.get("cook_duration_min"),
+                        "finish_duration_min": config.get("finish_duration_min")
+                    }
+                except:
+                    pass
             
             return {
                 "status": "success",
@@ -239,12 +432,18 @@ async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
                     "description": smoke.description,
                     "started_at": smoke.started_at.isoformat(),
                     "ended_at": smoke.ended_at.isoformat() if smoke.ended_at else None,
-                    "is_active": smoke.is_active
+                    "is_active": smoke.is_active,
+                    "meat_target_temp_f": smoke.meat_target_temp_f,
+                    "meat_probe_tc_id": smoke.meat_probe_tc_id,
+                    **config_data
                 }
             }
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to update smoke session: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to update smoke session: {str(e)}")
 
 

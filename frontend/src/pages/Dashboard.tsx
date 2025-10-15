@@ -20,6 +20,7 @@ import { Controls } from '../components/Controls'
 import { Alarms } from '../components/Alarms'
 import { SmokeSession } from '../components/SmokeSession'
 import { PhaseProgress } from '../components/PhaseProgress'
+import { SessionTimeDisplay } from '../components/SessionTimeDisplay'
 import { PhaseTransitionModal } from '../components/PhaseTransitionModal'
 import { EditPhaseDialog } from '../components/EditPhaseDialog'
 import { apiClient, useWebSocket } from '../api/client'
@@ -161,6 +162,7 @@ const DEFAULT_LAYOUT = [
   'connection',
   'controls',
   'session',
+  'session-time',
   'phases',
   'chart',
   'thermocouples',
@@ -171,6 +173,7 @@ const DEFAULT_SIZES: Record<string, TileSize> = {
   connection: 'full',
   controls: 'medium',
   session: 'medium',
+  'session-time': 'medium',
   phases: 'medium',
   chart: 'large',
   thermocouples: 'full',
@@ -181,6 +184,7 @@ const DEFAULT_VISIBILITY: Record<string, boolean> = {
   connection: true,
   controls: true,
   session: true,
+  'session-time': true,
   phases: true,
   chart: true,
   thermocouples: true,
@@ -211,6 +215,8 @@ export function Dashboard() {
   const [phaseTransitionData, setPhaseTransitionData] = useState<any>(null)
   const [showEditPhaseDialog, setShowEditPhaseDialog] = useState(false)
   const [editPhaseData, setEditPhaseData] = useState<any>(null)
+  const [activeSmoke, setActiveSmoke] = useState<any>(null)
+  const [allPhases, setAllPhases] = useState<any[]>([])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -249,6 +255,18 @@ export function Dashboard() {
         setStatus(statusData)
         setUnits(settingsData.units)
         setThermocouples(thermocouplesData.thermocouples.sort((a, b) => a.order - b.order))
+        
+        // Load active smoke and phases if available
+        if (statusData.active_smoke_id) {
+          const smokesData = await apiClient.getSmokes({ limit: 1 })
+          const active = smokesData.smokes.find((s: any) => s.is_active)
+          setActiveSmoke(active || null)
+          
+          if (active) {
+            const phasesData = await apiClient.getSmokePhases(active.id)
+            setAllPhases(phasesData || [])
+          }
+        }
       } catch (error) {
         console.error('Failed to fetch initial data:', error)
       }
@@ -266,8 +284,29 @@ export function Dashboard() {
     apiClient.getStatus().then(setStatus).catch(console.error)
   }
 
-  const handleSessionChange = () => {
-    apiClient.getStatus().then(setStatus).catch(console.error)
+  const handleSessionChange = async () => {
+    try {
+      const newStatus = await apiClient.getStatus()
+      setStatus(newStatus)
+      
+      // Load active smoke and phases if available
+      if (newStatus.active_smoke_id) {
+        const smokesData = await apiClient.getSmokes({ limit: 1 })
+        const active = smokesData.smokes.find((s: any) => s.is_active)
+        setActiveSmoke(active || null)
+        
+        // Load phases for active smoke
+        if (active) {
+          const phasesData = await apiClient.getSmokePhases(active.id)
+          setAllPhases(phasesData || [])
+        }
+      } else {
+        setActiveSmoke(null)
+        setAllPhases([])
+      }
+    } catch (error) {
+      console.error('Error updating session:', error)
+    }
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -350,6 +389,29 @@ export function Dashboard() {
       size: tileSizes.session || 'medium',
       visible: tileVisibility.session ?? true,
       component: <SmokeSession onSessionChange={handleSessionChange} />,
+    },
+    'session-time': {
+      id: 'session-time',
+      title: 'Session Time',
+      icon: '⏱️',
+      description: 'Track elapsed time and estimated finish',
+      size: tileSizes['session-time'] || 'medium',
+      visible: tileVisibility['session-time'] ?? true,
+      component: status?.active_smoke_id && activeSmoke ? (
+        <SessionTimeDisplay
+          smoke={activeSmoke}
+          currentPhase={status.current_phase}
+          allPhases={allPhases}
+        />
+      ) : (
+        <div className="card h-full flex items-center justify-center">
+          <div className="text-center text-gray-500 py-8">
+            <div className="text-4xl mb-2">⏱️</div>
+            <div className="text-sm">No active session</div>
+            <div className="text-xs mt-1">Create a session to track time</div>
+          </div>
+        </div>
+      ),
     },
     phases: {
       id: 'phases',
