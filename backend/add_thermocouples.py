@@ -27,10 +27,10 @@ def add_thermocouple_tables():
             # Check if any thermocouples exist
             existing = session.query(TC).first()
             if not existing:
-                # Create default control thermocouple
+                # Create default control thermocouple (only one)
                 tc = TC(
                     name="Grate",
-                    cs_pin=8,  # CE0
+                    cs_pin=8,  # CE0 (GPIO 8)
                     enabled=True,
                     is_control=True,
                     order=0,

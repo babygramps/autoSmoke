@@ -203,11 +203,22 @@ class MultiThermocoupleManager:
         self.sim_mode = sim_mode
         self.sensors: Dict[int, any] = {}  # thermocouple_id -> sensor object
         self.sim_temps: Dict[int, SimTempSensor] = {}  # For simulation
+        self.cs_pins_in_use: Dict[int, int] = {}  # cs_pin -> thermocouple_id mapping
         logger.info(f"MultiThermocoupleManager initialized (sim_mode={sim_mode})")
     
     def add_thermocouple(self, thermocouple_id: int, cs_pin: int, name: str):
         """Add a thermocouple to the manager."""
         logger.info(f"Adding thermocouple {name} (ID={thermocouple_id}, CS pin={cs_pin}) in {'simulation' if self.sim_mode else 'hardware'} mode")
+        
+        # Check for duplicate CS pin (unless in simulation mode)
+        if not self.sim_mode and cs_pin in self.cs_pins_in_use:
+            existing_tc_id = self.cs_pins_in_use[cs_pin]
+            logger.error(f"✗ CS pin {cs_pin} already in use by thermocouple ID {existing_tc_id}")
+            logger.error(f"✗ Cannot add thermocouple {name} (ID={thermocouple_id}) - duplicate CS pin")
+            logger.warning(f"⚠ FALLBACK: Using simulation for thermocouple {name}")
+            sim_sensor = SimTempSensor()
+            self.sim_temps[thermocouple_id] = sim_sensor
+            return
         
         if self.sim_mode:
             # Create a simulated sensor for this thermocouple
@@ -256,6 +267,7 @@ class MultiThermocoupleManager:
                     return
                 
                 self.sensors[thermocouple_id] = sensor
+                self.cs_pins_in_use[cs_pin] = thermocouple_id
                 
             except ImportError as e:
                 logger.error(f"✗ Required libraries not available for thermocouple {name}: {e}")
@@ -271,6 +283,12 @@ class MultiThermocoupleManager:
     
     def remove_thermocouple(self, thermocouple_id: int):
         """Remove a thermocouple from the manager."""
+        # Remove from CS pin tracking
+        for cs_pin, tc_id in list(self.cs_pins_in_use.items()):
+            if tc_id == thermocouple_id:
+                del self.cs_pins_in_use[cs_pin]
+                break
+        
         if thermocouple_id in self.sensors:
             del self.sensors[thermocouple_id]
         if thermocouple_id in self.sim_temps:
