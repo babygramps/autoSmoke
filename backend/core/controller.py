@@ -712,12 +712,14 @@ class SmokerController:
         """Get current controller status."""
         # Build thermocouple readings for status
         tc_temps = {}
+        tc_status = self.tc_manager.get_fallback_status()
         for tc_id, (temp_c, fault) in self.tc_readings.items():
             if temp_c is not None:
                 tc_temps[tc_id] = {
                     "temp_c": temp_c,
                     "temp_f": settings.celsius_to_fahrenheit(temp_c),
-                    "fault": fault
+                    "fault": fault,
+                    "mode": tc_status.get(tc_id, "unknown")  # 'real' or 'simulated'
                 }
         
         # Get phase information if active session
@@ -733,6 +735,9 @@ class SmokerController:
                         pending_phase_transition = smoke.pending_phase_transition
             except Exception as e:
                 logger.error(f"Failed to get smoke status: {e}")
+        
+        # Check if using fallback simulation
+        using_fallback = self.tc_manager.has_fallback_sensors()
         
         return {
             "running": self.running,
@@ -753,7 +758,9 @@ class SmokerController:
             "control_tc_id": self.control_tc_id,
             "thermocouple_readings": tc_temps,
             "current_phase": current_phase,
-            "pending_phase_transition": pending_phase_transition
+            "pending_phase_transition": pending_phase_transition,
+            "sim_mode": self.sim_mode,
+            "using_fallback_simulation": using_fallback
         }
 
 

@@ -216,6 +216,7 @@ class MultiThermocoupleManager:
             self.sim_temps[thermocouple_id] = sim_sensor
             logger.info(f"✓ Added simulated thermocouple {name} (ID={thermocouple_id}) starting at {sim_sensor.current_temp:.1f}°C")
         else:
+            # Hardware mode - try to initialize real sensor
             try:
                 import board
                 import digitalio
@@ -225,26 +226,46 @@ class MultiThermocoupleManager:
                 cs_board_pin = self._gpio_to_board_pin(cs_pin)
                 if cs_board_pin is None:
                     logger.error(f"✗ Invalid CS pin {cs_pin} for thermocouple {name}")
-                    logger.warning(f"Falling back to simulation mode for thermocouple {name}")
+                    logger.warning(f"⚠ FALLBACK: Using simulation for thermocouple {name} (invalid pin)")
                     sim_sensor = SimTempSensor()
                     self.sim_temps[thermocouple_id] = sim_sensor
                     return
                 
+                logger.info(f"Attempting to initialize MAX31855 on CS pin {cs_pin}...")
                 spi = board.SPI()
                 cs = digitalio.DigitalInOut(cs_board_pin)
                 sensor = MAX31855(spi, cs)
+                
+                # Test read to verify thermocouple is connected
+                try:
+                    temp = sensor.temperature
+                    if temp is None or temp == float('inf') or temp == float('-inf'):
+                        logger.error(f"✗ Thermocouple {name} initialized but returning invalid readings")
+                        logger.error(f"⚠ This usually means NO THERMOCOUPLE IS CONNECTED to CS pin {cs_pin}")
+                        logger.warning(f"⚠ FALLBACK: Using simulation for thermocouple {name}")
+                        sim_sensor = SimTempSensor()
+                        self.sim_temps[thermocouple_id] = sim_sensor
+                        return
+                    logger.info(f"✓ Added real MAX31855 thermocouple {name} (ID={thermocouple_id}, CS pin={cs_pin}), current reading: {temp:.1f}°C")
+                except Exception as read_err:
+                    logger.error(f"✗ Failed to read from thermocouple {name}: {read_err}")
+                    logger.error(f"⚠ This usually means NO THERMOCOUPLE IS CONNECTED to CS pin {cs_pin}")
+                    logger.warning(f"⚠ FALLBACK: Using simulation for thermocouple {name}")
+                    sim_sensor = SimTempSensor()
+                    self.sim_temps[thermocouple_id] = sim_sensor
+                    return
+                
                 self.sensors[thermocouple_id] = sensor
-                logger.info(f"✓ Added real MAX31855 thermocouple {name} (ID={thermocouple_id}, CS pin={cs_pin})")
                 
             except ImportError as e:
                 logger.error(f"✗ Required libraries not available for thermocouple {name}: {e}")
-                logger.warning(f"Falling back to simulation mode for thermocouple {name}")
-                # Fall back to simulation for this sensor
+                logger.warning(f"⚠ FALLBACK: Using simulation for thermocouple {name}")
                 sim_sensor = SimTempSensor()
                 self.sim_temps[thermocouple_id] = sim_sensor
             except Exception as e:
                 logger.error(f"✗ Failed to initialize thermocouple {name}: {e}")
-                logger.warning(f"Falling back to simulation mode for thermocouple {name}")
+                logger.error(f"⚠ This might mean NO THERMOCOUPLE IS CONNECTED to CS pin {cs_pin}")
+                logger.warning(f"⚠ FALLBACK: Using simulation for thermocouple {name}")
                 sim_sensor = SimTempSensor()
                 self.sim_temps[thermocouple_id] = sim_sensor
     
@@ -254,6 +275,24 @@ class MultiThermocoupleManager:
             del self.sensors[thermocouple_id]
         if thermocouple_id in self.sim_temps:
             del self.sim_temps[thermocouple_id]
+    
+    def get_fallback_status(self) -> Dict[int, str]:
+        """
+        Get status of which thermocouples are using fallback simulation.
+        Returns dict of {thermocouple_id: 'real' | 'simulated'}
+        """
+        status = {}
+        for tc_id in self.sensors.keys():
+            status[tc_id] = 'real'
+        for tc_id in self.sim_temps.keys():
+            status[tc_id] = 'simulated'
+        return status
+    
+    def has_fallback_sensors(self) -> bool:
+        """Check if any sensors are using fallback simulation when not in sim_mode."""
+        if self.sim_mode:
+            return False  # Expected to be simulated
+        return len(self.sim_temps) > 0  # Using simulation when shouldn't be
     
     def update_setpoint(self, setpoint_c: float):
         """Update setpoint for all simulation sensors."""
