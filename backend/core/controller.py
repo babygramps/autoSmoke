@@ -24,17 +24,21 @@ class SmokerController:
         self.boost_active = False
         self.boost_until = None
         
+        # Load settings from database first (needed to determine sim_mode)
+        db_settings = self._load_db_settings()
+        
+        # Determine simulation mode from database settings (or fall back to config)
+        self.sim_mode = db_settings.sim_mode if db_settings else settings.smoker_sim_mode
+        logger.info(f"Controller initializing with sim_mode={self.sim_mode} (from {'database' if db_settings else 'config'})")
+        
         # Hardware
         self.temp_sensor = create_temp_sensor()  # Kept for backward compatibility
         self.relay_driver = create_relay_driver()
         
-        # Multi-thermocouple manager
-        self.tc_manager = MultiThermocoupleManager(sim_mode=settings.smoker_sim_mode)
+        # Multi-thermocouple manager (using database sim_mode setting)
+        self.tc_manager = MultiThermocoupleManager(sim_mode=self.sim_mode)
         self.control_tc_id = None  # ID of the control thermocouple
         self.tc_readings = {}  # Latest readings: {tc_id: (temp_c, fault)}
-        
-        # Load settings from database (or use defaults)
-        db_settings = self._load_db_settings()
         
         # PID Controller
         self.pid = PIDController(
@@ -147,6 +151,31 @@ class SmokerController:
         self.tc_readings = {}
         # Reload from DB
         self._load_thermocouples()
+    
+    def reload_hardware(self, new_sim_mode: bool):
+        """
+        Reload hardware with new simulation mode setting.
+        This recreates the thermocouple manager with the new sim_mode.
+        WARNING: Only call this when the controller is stopped!
+        """
+        if self.running:
+            logger.error("Cannot reload hardware while controller is running. Stop the controller first.")
+            return False
+        
+        old_sim_mode = self.sim_mode
+        self.sim_mode = new_sim_mode
+        
+        logger.info(f"Reloading hardware: sim_mode changed from {old_sim_mode} to {new_sim_mode}")
+        
+        # Recreate the thermocouple manager with new sim_mode
+        self.tc_manager = MultiThermocoupleManager(sim_mode=self.sim_mode)
+        self.tc_readings = {}
+        
+        # Reload thermocouple configurations
+        self._load_thermocouples()
+        
+        logger.info(f"Hardware reloaded successfully with sim_mode={self.sim_mode}")
+        return True
     
     def _load_active_smoke(self):
         """Load or create active smoking session."""

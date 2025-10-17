@@ -103,6 +103,19 @@ async def update_settings(settings_update: SettingsUpdate):
             session.commit()
             session.refresh(db_settings)
             
+            # Handle simulation mode change
+            if settings_update.sim_mode is not None and settings_update.sim_mode != controller.sim_mode:
+                if controller.running:
+                    logger.warning(f"Cannot change sim_mode while controller is running. Current: {controller.sim_mode}, Requested: {settings_update.sim_mode}")
+                    logger.info("Database updated, but hardware will not be reloaded until controller is stopped and restarted.")
+                else:
+                    logger.info(f"Simulation mode changing from {controller.sim_mode} to {settings_update.sim_mode}")
+                    success = controller.reload_hardware(settings_update.sim_mode)
+                    if success:
+                        logger.info(f"Hardware reloaded with new sim_mode={settings_update.sim_mode}")
+                    else:
+                        logger.error("Failed to reload hardware with new sim_mode")
+            
             # Update controller settings (always update, not just when running)
             # Control mode - always update
             if settings_update.control_mode is not None:

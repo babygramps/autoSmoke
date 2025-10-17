@@ -203,12 +203,14 @@ class MultiThermocoupleManager:
     
     def add_thermocouple(self, thermocouple_id: int, cs_pin: int, name: str):
         """Add a thermocouple to the manager."""
+        logger.info(f"Adding thermocouple {name} (ID={thermocouple_id}, CS pin={cs_pin}) in {'simulation' if self.sim_mode else 'hardware'} mode")
+        
         if self.sim_mode:
             # Create a simulated sensor for this thermocouple
             sim_sensor = SimTempSensor()
             sim_sensor.current_temp = 20.0 + (thermocouple_id * 5)  # Offset temps for testing
             self.sim_temps[thermocouple_id] = sim_sensor
-            logger.info(f"Added simulated thermocouple {name} (ID={thermocouple_id})")
+            logger.info(f"✓ Added simulated thermocouple {name} (ID={thermocouple_id}) starting at {sim_sensor.current_temp:.1f}°C")
         else:
             try:
                 import board
@@ -218,22 +220,27 @@ class MultiThermocoupleManager:
                 # Map CS pin to board pin
                 cs_board_pin = self._gpio_to_board_pin(cs_pin)
                 if cs_board_pin is None:
-                    logger.error(f"Invalid CS pin {cs_pin} for thermocouple {name}")
+                    logger.error(f"✗ Invalid CS pin {cs_pin} for thermocouple {name}")
+                    logger.warning(f"Falling back to simulation mode for thermocouple {name}")
+                    sim_sensor = SimTempSensor()
+                    self.sim_temps[thermocouple_id] = sim_sensor
                     return
                 
                 spi = board.SPI()
                 cs = digitalio.DigitalInOut(cs_board_pin)
                 sensor = MAX31855(spi, cs)
                 self.sensors[thermocouple_id] = sensor
-                logger.info(f"Added MAX31855 thermocouple {name} (ID={thermocouple_id}, CS pin={cs_pin})")
+                logger.info(f"✓ Added real MAX31855 thermocouple {name} (ID={thermocouple_id}, CS pin={cs_pin})")
                 
             except ImportError as e:
-                logger.error(f"Required libraries not available for thermocouple {name}: {e}")
+                logger.error(f"✗ Required libraries not available for thermocouple {name}: {e}")
+                logger.warning(f"Falling back to simulation mode for thermocouple {name}")
                 # Fall back to simulation for this sensor
                 sim_sensor = SimTempSensor()
                 self.sim_temps[thermocouple_id] = sim_sensor
             except Exception as e:
-                logger.error(f"Failed to initialize thermocouple {name}: {e}")
+                logger.error(f"✗ Failed to initialize thermocouple {name}: {e}")
+                logger.warning(f"Falling back to simulation mode for thermocouple {name}")
                 sim_sensor = SimTempSensor()
                 self.sim_temps[thermocouple_id] = sim_sensor
     
@@ -256,11 +263,14 @@ class MultiThermocoupleManager:
         """
         results = {}
         
+        logger.debug(f"Reading all thermocouples: {len(self.sim_temps)} simulated, {len(self.sensors)} real")
+        
         if self.sim_mode or self.sim_temps:
             # Read from simulated sensors
             for tc_id, sim_sensor in self.sim_temps.items():
                 temp_c = await sim_sensor.read_temperature()
                 results[tc_id] = (temp_c, False)  # No faults in simulation
+                logger.debug(f"Simulated TC {tc_id}: {temp_c:.1f}°C")
         
         # Read from real sensors
         for tc_id, sensor in self.sensors.items():
@@ -273,6 +283,8 @@ class MultiThermocoupleManager:
                     logger.warning(f"Invalid temperature reading from thermocouple ID {tc_id}")
                     temp_c = None
                     fault = True
+                else:
+                    logger.debug(f"Real TC {tc_id}: {temp_c:.1f}°C")
                 
                 results[tc_id] = (temp_c, fault)
             except Exception as e:
