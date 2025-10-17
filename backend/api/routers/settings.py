@@ -103,18 +103,28 @@ async def update_settings(settings_update: SettingsUpdate):
             session.commit()
             session.refresh(db_settings)
             
-            # Handle simulation mode change
+            # Handle hardware setting changes (sim_mode, gpio_pin, relay_active_high)
+            hardware_changed = False
             if settings_update.sim_mode is not None and settings_update.sim_mode != controller.sim_mode:
+                hardware_changed = True
+            if settings_update.gpio_pin is not None or settings_update.relay_active_high is not None:
+                hardware_changed = True
+            
+            if hardware_changed:
                 if controller.running:
-                    logger.warning(f"Cannot change sim_mode while controller is running. Current: {controller.sim_mode}, Requested: {settings_update.sim_mode}")
+                    logger.warning("Cannot reload hardware while controller is running.")
                     logger.info("Database updated, but hardware will not be reloaded until controller is stopped and restarted.")
                 else:
-                    logger.info(f"Simulation mode changing from {controller.sim_mode} to {settings_update.sim_mode}")
-                    success = controller.reload_hardware(settings_update.sim_mode)
+                    new_sim_mode = settings_update.sim_mode if settings_update.sim_mode is not None else controller.sim_mode
+                    new_gpio_pin = settings_update.gpio_pin if settings_update.gpio_pin is not None else db_settings.gpio_pin
+                    new_relay_active_high = settings_update.relay_active_high if settings_update.relay_active_high is not None else db_settings.relay_active_high
+                    
+                    logger.info(f"Hardware settings changed: sim_mode={new_sim_mode}, gpio_pin={new_gpio_pin}, active_high={new_relay_active_high}")
+                    success = controller.reload_hardware(new_sim_mode, new_gpio_pin, new_relay_active_high)
                     if success:
-                        logger.info(f"Hardware reloaded with new sim_mode={settings_update.sim_mode}")
+                        logger.info("Hardware reloaded successfully with new settings")
                     else:
-                        logger.error("Failed to reload hardware with new sim_mode")
+                        logger.error("Failed to reload hardware")
             
             # Update controller settings (always update, not just when running)
             # Control mode - always update

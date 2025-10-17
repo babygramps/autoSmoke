@@ -117,19 +117,23 @@ class SimTempSensor:
 class RealRelayDriver:
     """Real GPIO relay driver."""
     
-    def __init__(self, pin: int = 17, active_high: bool = False):
+    def __init__(self, pin: int = 17, active_high: bool = False, force_real: bool = False):
         self.pin = pin
         self.active_high = active_high
         self.current_state = False
+        self.force_real = force_real
+        self.gpio_device = None
         self._initialize_gpio()
     
     def _initialize_gpio(self):
         """Initialize GPIO for relay control."""
         try:
-            if settings.smoker_sim_mode:
+            # Only check environment sim_mode if not forced to use real hardware
+            if not self.force_real and settings.smoker_sim_mode:
                 logger.info("Simulation mode enabled, skipping GPIO initialization")
                 return
-                
+            
+            logger.info(f"Initializing real GPIO relay on pin {self.pin}, active_high={self.active_high}")
             from gpiozero import DigitalOutputDevice
             
             self.gpio_device = DigitalOutputDevice(
@@ -137,15 +141,15 @@ class RealRelayDriver:
                 active_high=self.active_high,
                 initial_value=False
             )
-            logger.info(f"GPIO relay initialized on pin {self.pin}, active_high={self.active_high}")
+            logger.info(f"✓ GPIO relay initialized successfully on pin {self.pin}, active_high={self.active_high}")
             
         except ImportError as e:
-            logger.error(f"GPIO libraries not available: {e}")
-            logger.info("Falling back to simulation mode")
+            logger.error(f"✗ GPIO libraries not available: {e}")
+            logger.warning("Falling back to simulation mode for relay")
             self.gpio_device = None
         except Exception as e:
-            logger.error(f"Failed to initialize GPIO: {e}")
-            logger.info("Falling back to simulation mode")
+            logger.error(f"✗ Failed to initialize GPIO: {e}")
+            logger.warning("Falling back to simulation mode for relay")
             self.gpio_device = None
     
     async def set_state(self, state: bool) -> None:
@@ -154,13 +158,13 @@ class RealRelayDriver:
             try:
                 self.gpio_device.value = state
                 self.current_state = state
-                logger.debug(f"Relay set to {'ON' if state else 'OFF'}")
+                logger.info(f"GPIO {self.pin}: Relay set to {'ON' if state else 'OFF'} (pin {'HIGH' if (state == self.active_high) else 'LOW'})")
             except Exception as e:
-                logger.error(f"Error setting relay state: {e}")
+                logger.error(f"Error setting relay state on GPIO {self.pin}: {e}")
         else:
-            # Simulation mode - just log
+            # Simulation mode or GPIO not initialized - just log
             if state != self.current_state:
-                logger.info(f"SIM: Relay {'ON' if state else 'OFF'}")
+                logger.info(f"SIM Relay: {'ON' if state else 'OFF'} (GPIO device not initialized)")
                 self.current_state = state
     
     async def get_state(self) -> bool:

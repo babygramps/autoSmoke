@@ -31,9 +31,13 @@ class SmokerController:
         self.sim_mode = db_settings.sim_mode if db_settings else settings.smoker_sim_mode
         logger.info(f"Controller initializing with sim_mode={self.sim_mode} (from {'database' if db_settings else 'config'})")
         
-        # Hardware
+        # Get GPIO settings from database
+        gpio_pin = db_settings.gpio_pin if db_settings else settings.smoker_gpio_pin
+        relay_active_high = db_settings.relay_active_high if db_settings else settings.smoker_relay_active_high
+        
+        # Hardware (pass sim_mode explicitly to avoid environment variable issues)
         self.temp_sensor = create_temp_sensor()  # Kept for backward compatibility
-        self.relay_driver = create_relay_driver()
+        self.relay_driver = self._create_relay_driver(gpio_pin, relay_active_high)
         
         # Multi-thermocouple manager (using database sim_mode setting)
         self.tc_manager = MultiThermocoupleManager(sim_mode=self.sim_mode)
@@ -111,6 +115,17 @@ class SmokerController:
             logger.warning(f"Failed to load database settings: {e}. Using config defaults.")
             return None
     
+    def _create_relay_driver(self, gpio_pin: int, active_high: bool):
+        """Create relay driver based on current sim_mode."""
+        if self.sim_mode:
+            from core.hardware import SimRelayDriver
+            logger.info("Creating simulated relay driver")
+            return SimRelayDriver()
+        else:
+            from core.hardware import RealRelayDriver
+            logger.info(f"Creating real relay driver (GPIO pin={gpio_pin}, active_high={active_high})")
+            return RealRelayDriver(pin=gpio_pin, active_high=active_high, force_real=True)
+    
     def _load_thermocouples(self):
         """Load thermocouple configurations from database and initialize hardware."""
         try:
@@ -152,10 +167,10 @@ class SmokerController:
         # Reload from DB
         self._load_thermocouples()
     
-    def reload_hardware(self, new_sim_mode: bool):
+    def reload_hardware(self, new_sim_mode: bool, gpio_pin: int = None, relay_active_high: bool = None):
         """
         Reload hardware with new simulation mode setting.
-        This recreates the thermocouple manager with the new sim_mode.
+        This recreates the thermocouple manager and relay driver with the new settings.
         WARNING: Only call this when the controller is stopped!
         """
         if self.running:
@@ -167,6 +182,25 @@ class SmokerController:
         
         logger.info(f"Reloading hardware: sim_mode changed from {old_sim_mode} to {new_sim_mode}")
         
+        # Get current GPIO settings if not provided
+        if gpio_pin is None or relay_active_high is None:
+            try:
+                with get_session_sync() as session:
+                    db_settings = session.get(DBSettings, 1)
+                    if db_settings:
+                        gpio_pin = gpio_pin if gpio_pin is not None else db_settings.gpio_pin
+                        relay_active_high = relay_active_high if relay_active_high is not None else db_settings.relay_active_high
+                    else:
+                        gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
+                        relay_active_high = relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
+            except Exception as e:
+                logger.error(f"Failed to load GPIO settings: {e}")
+                gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
+                relay_active_high = relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
+        
+        # Recreate the relay driver with new sim_mode
+        self.relay_driver = self._create_relay_driver(gpio_pin, relay_active_high)
+        
         # Recreate the thermocouple manager with new sim_mode
         self.tc_manager = MultiThermocoupleManager(sim_mode=self.sim_mode)
         self.tc_readings = {}
@@ -174,7 +208,7 @@ class SmokerController:
         # Reload thermocouple configurations
         self._load_thermocouples()
         
-        logger.info(f"Hardware reloaded successfully with sim_mode={self.sim_mode}")
+        logger.info(f"Hardware reloaded successfully with sim_mode={self.sim_mode}, GPIO pin={gpio_pin}, active_high={relay_active_high}")
         return True
     
     def _load_active_smoke(self):
