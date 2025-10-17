@@ -68,6 +68,9 @@ class SmokerController:
         # Load thermocouples from database (after setpoint is initialized)
         self._load_thermocouples()
         
+        # Check for hardware fallback immediately after loading (creates alert if needed)
+        self._check_hardware_fallback_on_init()
+        
         self.current_temp_c = None
         self.current_temp_f = None
         self.pid_output = 0.0
@@ -159,6 +162,33 @@ class SmokerController:
                 
         except Exception as e:
             logger.error(f"Failed to load thermocouples: {e}")
+    
+    def _check_hardware_fallback_on_init(self):
+        """Check for hardware fallback during initialization and create alert if needed."""
+        if not self.sim_mode and self.tc_manager.has_fallback_sensors():
+            fallback_status = self.tc_manager.get_fallback_status()
+            fallback_tcs = []
+            
+            try:
+                with get_session_sync() as session:
+                    for tc_id, mode in fallback_status.items():
+                        if mode == "simulated":
+                            tc = session.get(Thermocouple, tc_id)
+                            if tc:
+                                fallback_tcs.append(f"{tc.name} (pin {tc.cs_pin})")
+                                logger.warning(f"⚠ Thermocouple '{tc.name}' is using FALLBACK SIMULATION - check hardware connection!")
+            except Exception as e:
+                logger.error(f"Error checking fallback status: {e}")
+            
+            if fallback_tcs:
+                logger.error("=" * 60)
+                logger.error("HARDWARE FALLBACK DETECTED!")
+                logger.error(f"The following thermocouples are NOT connected:")
+                for tc in fallback_tcs:
+                    logger.error(f"  - {tc}")
+                logger.error("Simulation mode is OFF but hardware is not responding.")
+                logger.error("Check your thermocouple connections and CS pins!")
+                logger.error("=" * 60)
     
     def reload_thermocouples(self):
         """Reload thermocouple configuration (call after DB changes)."""

@@ -47,6 +47,9 @@ class AlertManager:
             # Sensor fault alert
             await self._check_sensor_fault_alert(controller_status)
             
+            # Hardware fallback alert
+            await self._check_hardware_fallback_alert(controller_status)
+            
         except Exception as e:
             logger.error(f"Error checking alerts: {e}")
     
@@ -177,6 +180,47 @@ class AlertManager:
                 )
         else:
             await self._clear_alert(alert_key, "Sensor reading restored")
+    
+    async def _check_hardware_fallback_alert(self, status: dict):
+        """Check if hardware is using fallback simulation mode."""
+        using_fallback = status.get("using_fallback_simulation", False)
+        sim_mode = status.get("sim_mode", True)
+        alert_key = "hardware_fallback"
+        
+        # Only alert if NOT in simulation mode but using fallback
+        if not sim_mode and using_fallback:
+            # Get details about which thermocouples are using fallback
+            tc_readings = status.get("thermocouple_readings", {})
+            fallback_tcs = []
+            
+            # Load thermocouple names from database
+            try:
+                from db.models import Thermocouple
+                with get_session_sync() as session:
+                    for tc_id, reading in tc_readings.items():
+                        if reading.get("mode") == "simulated":
+                            tc = session.get(Thermocouple, tc_id)
+                            if tc:
+                                fallback_tcs.append(f"{tc.name} (pin {tc.cs_pin})")
+            except Exception as e:
+                logger.error(f"Error loading thermocouple names: {e}")
+                fallback_tcs = ["Unknown thermocouples"]
+            
+            if fallback_tcs and alert_key not in self.active_alerts:
+                tc_list = ", ".join(fallback_tcs)
+                await self._create_alert(
+                    alert_key,
+                    "hardware_fallback",
+                    "warning",
+                    f"Hardware not connected: {tc_list} using simulated data. Check connections!",
+                    {
+                        "using_fallback": using_fallback,
+                        "sim_mode": sim_mode,
+                        "fallback_thermocouples": fallback_tcs
+                    }
+                )
+        else:
+            await self._clear_alert(alert_key, "All hardware connected properly")
     
     async def _create_alert(self, alert_key: str, alert_type: str, severity: str, message: str, metadata: dict):
         """Create a new alert."""
