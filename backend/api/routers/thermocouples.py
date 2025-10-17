@@ -182,6 +182,51 @@ async def update_thermocouple(thermocouple_id: int, tc_update: ThermocoupleUpdat
         raise HTTPException(status_code=500, detail=f"Failed to update thermocouple: {str(e)}")
 
 
+@router.post("/{thermocouple_id}/set_control")
+async def set_control_thermocouple(thermocouple_id: int):
+    """Set a thermocouple as the control thermocouple."""
+    try:
+        with get_session_sync() as session:
+            tc = session.get(Thermocouple, thermocouple_id)
+            if not tc:
+                raise HTTPException(status_code=404, detail="Thermocouple not found")
+            
+            # Unset all other control thermocouples
+            from sqlmodel import select
+            statement = select(Thermocouple).where(Thermocouple.is_control == True)
+            existing_control = session.exec(statement).all()
+            for existing_tc in existing_control:
+                if existing_tc.id != thermocouple_id:
+                    existing_tc.is_control = False
+            
+            # Set this one as control
+            tc.is_control = True
+            tc.updated_at = datetime.utcnow()
+            session.commit()
+            session.refresh(tc)
+            
+            # Reload thermocouples in controller
+            controller.reload_thermocouples()
+            
+            return {
+                "status": "success",
+                "message": f"Thermocouple '{tc.name}' set as control thermocouple",
+                "thermocouple": {
+                    "id": tc.id,
+                    "name": tc.name,
+                    "cs_pin": tc.cs_pin,
+                    "enabled": tc.enabled,
+                    "is_control": tc.is_control,
+                    "order": tc.order,
+                    "color": tc.color
+                }
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set control thermocouple: {str(e)}")
+
+
 @router.delete("/{thermocouple_id}")
 async def delete_thermocouple(thermocouple_id: int):
     """Delete a thermocouple."""
