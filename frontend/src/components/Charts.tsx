@@ -530,16 +530,19 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
           <div className="flex items-center gap-2">
             <label className="text-sm text-gray-600">View:</label>
             <select
-              value={timeRange === null ? 'all' : timeRange}
+              value={timeRange === null ? ((filterMode === 'session' && smokeId) ? 'all' : 2) : timeRange}
               onChange={(e) => setTimeRange(e.target.value === 'all' ? null : Number(e.target.value))}
               className="text-sm border border-gray-300 rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
-              {filterMode === 'session' && smokeId && <option value="all">Full Session</option>}
-              <option value="1">Last 1 Hour</option>
-              <option value="2">Last 2 Hours</option>
-              <option value="4">Last 4 Hours</option>
-              <option value="8">Last 8 Hours</option>
-              <option value="24">Last 24 Hours</option>
+              {filterMode === 'session' && smokeId && <option value="all">Active Session</option>}
+              <option value="0.25">Last 15 minutes</option>
+              <option value="0.5">Last 30 minutes</option>
+              <option value="0.75">Last 45 minutes</option>
+              <option value="1">Last 1 hour</option>
+              <option value="2">Last 2 hours</option>
+              <option value="4">Last 4 hours</option>
+              <option value="8">Last 8 hours</option>
+              <option value="24">Last 24 hours</option>
             </select>
           </div>
         </div>
