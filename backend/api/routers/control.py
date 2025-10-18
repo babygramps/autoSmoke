@@ -38,6 +38,7 @@ class AutoTuneRequest(BaseModel):
     lookback_seconds: float = 60.0  # Lookback window for peak detection
     noise_band: float = 0.5  # Temperature noise band (degrees C)
     tuning_rule: str = TuningRule.TYREUS_LUYBEN.value  # Which tuning rule to use
+    auto_apply: bool = True  # Automatically apply gains when complete
 
 
 @router.post("/start")
@@ -208,7 +209,8 @@ async def start_autotune(request: AutoTuneRequest):
             output_step=request.output_step,
             lookback_seconds=request.lookback_seconds,
             noise_band=request.noise_band,
-            tuning_rule=tuning_rule
+            tuning_rule=tuning_rule,
+            auto_apply=request.auto_apply
         )
         
         if not success:

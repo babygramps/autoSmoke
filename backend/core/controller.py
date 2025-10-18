@@ -105,6 +105,7 @@ class SmokerController:
         # Auto-tuner
         self.autotuner: Optional[PIDAutoTuner] = None
         self.autotune_active = False
+        self.autotune_auto_apply = True
         
         logger.info("SmokerController initialized")
     
@@ -490,7 +491,8 @@ class SmokerController:
         output_step: float = 50.0,
         lookback_seconds: float = 60.0,
         noise_band: float = 0.5,
-        tuning_rule: TuningRule = TuningRule.TYREUS_LUYBEN
+        tuning_rule: TuningRule = TuningRule.TYREUS_LUYBEN,
+        auto_apply: bool = True
     ) -> bool:
         """
         Start PID auto-tuning process.
@@ -500,6 +502,7 @@ class SmokerController:
             lookback_seconds: Lookback window for peak detection
             noise_band: Temperature noise band to ignore (degrees C)
             tuning_rule: Which tuning rule to use
+            auto_apply: Automatically apply gains when complete (default True)
             
         Returns:
             True if auto-tune started successfully, False otherwise
@@ -535,11 +538,12 @@ class SmokerController:
         # Start the auto-tuning process
         if self.autotuner.start():
             self.autotune_active = True
+            self.autotune_auto_apply = auto_apply
             await self._log_event(
                 "autotune_start",
-                f"Auto-tune started: setpoint={self.setpoint_f:.1f}°F, rule={tuning_rule.value}"
+                f"Auto-tune started: setpoint={self.setpoint_f:.1f}°F, rule={tuning_rule.value}, auto_apply={auto_apply}"
             )
-            logger.info(f"Auto-tune started with rule: {tuning_rule.value}")
+            logger.info(f"Auto-tune started with rule: {tuning_rule.value}, auto_apply={auto_apply}")
             return True
         else:
             self.autotuner = None
@@ -609,9 +613,10 @@ class SmokerController:
             f"Auto-tuned PID gains applied: Kp={kp:.4f}, Ki={ki:.4f}, Kd={kd:.4f}"
         )
         
-        # Clear auto-tuner
+        # Clear auto-tuner and resume normal operation
         self.autotune_active = False
         self.autotuner = None
+        self.autotune_auto_apply = True
         
         return True
     
@@ -808,8 +813,13 @@ class SmokerController:
                         f"Auto-tune completed: Kp={kp:.4f}, Ki={ki:.4f}, Kd={kd:.4f}"
                     )
                     
-                    # Note: Gains are NOT automatically applied - user must explicitly apply them
-                    logger.info("   Use apply_autotune_gains() to apply these values")
+                    # Auto-apply gains if enabled
+                    if self.autotune_auto_apply:
+                        logger.info("   Auto-applying gains...")
+                        await self.apply_autotune_gains()
+                        logger.info("   ✅ Gains applied successfully! Controller resuming with new PID values.")
+                    else:
+                        logger.info("   Gains ready. Use apply_autotune_gains() to apply these values")
             else:
                 logger.warning(f"Auto-tune completed with state: {state}")
                 await self._log_event(
