@@ -753,6 +753,9 @@ class SmokerController:
                     # Keep last known values but could mark as stale
                     pass
                 
+                # Log reading to database (always log, even when controller is stopped)
+                await self._log_reading()
+                
             except Exception as e:
                 logger.error(f"Error in monitoring loop: {e}")
             
@@ -835,8 +838,8 @@ class SmokerController:
         if self.active_smoke_id:
             await self._check_phase_conditions(temp_c)
         
-        # Log reading to database
-        await self._log_reading()
+        # Note: Readings are logged by monitoring loop, not here
+        # This prevents duplicate logging when controller is running
         
         # Check alerts
         await alert_manager.check_alerts(self.get_status())
