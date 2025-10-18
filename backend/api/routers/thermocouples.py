@@ -268,3 +268,44 @@ async def delete_thermocouple(thermocouple_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete thermocouple: {str(e)}")
 
+
+@router.get("/filtering-stats")
+async def get_filtering_stats():
+    """
+    Get filtering statistics for all thermocouples.
+    Shows how many outliers have been rejected and faults detected.
+    """
+    try:
+        # Access the thermocouple manager from the controller
+        if not hasattr(controller, 'thermocouple_manager') or controller.thermocouple_manager is None:
+            return {
+                "status": "not_available",
+                "message": "Thermocouple manager not initialized",
+                "stats": {}
+            }
+        
+        stats = controller.thermocouple_manager.get_filtering_stats()
+        
+        # Get thermocouple names for better display
+        with get_session_sync() as session:
+            from sqlmodel import select
+            statement = select(Thermocouple)
+            thermocouples = session.exec(statement).all()
+            tc_names = {tc.id: tc.name for tc in thermocouples}
+        
+        # Enrich stats with thermocouple names
+        enriched_stats = {}
+        for tc_id, stat in stats.items():
+            enriched_stats[tc_id] = {
+                "name": tc_names.get(tc_id, f"TC {tc_id}"),
+                "outliers_rejected": stat["outliers_rejected"],
+                "faults_detected": stat["faults_detected"],
+                "window_size": stat["window_size"]
+            }
+        
+        return {
+            "status": "success",
+            "stats": enriched_stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get filtering stats: {str(e)}")
