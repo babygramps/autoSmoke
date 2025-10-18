@@ -69,7 +69,7 @@ def clear_data(db_path: str = "./smoker.db"):
         # Get counts before deletion (for reporting)
         print("📊 Scanning database...")
         reading_count = safe_count("reading")
-        tc_reading_count = safe_count("thermocoupleread")
+        tc_reading_count = safe_count("thermocouplereading")
         alert_count = safe_count("alert")
         event_count = safe_count("event")
         smoke_count = safe_count("smoke")
@@ -106,14 +106,14 @@ def clear_data(db_path: str = "./smoker.db"):
         
         # Delete data (in order to respect foreign key constraints)
         # Children must be deleted before parents
-        # IMPORTANT: thermocoupleread references reading, reading references smoke
+        # IMPORTANT: thermocouplereading references reading, reading references smoke
         tables_to_clear = [
-            ("thermocoupleread", "Thermocouple readings"),  # References reading (must delete first)
-            ("smokephase", "Smoke phases"),                  # References smoke
-            ("reading", "Main readings"),                    # References smoke (delete after TC readings)
-            ("smoke", "Smoke sessions"),                     # Parent table (delete after children)
-            ("alert", "Alerts"),                             # Independent
-            ("event", "Events"),                             # Independent
+            ("thermocouplereading", "Thermocouple readings"),  # References reading (must delete first)
+            ("smokephase", "Smoke phases"),                    # References smoke
+            ("reading", "Main readings"),                      # References smoke (delete after TC readings)
+            ("smoke", "Smoke sessions"),                       # Parent table (delete after children)
+            ("alert", "Alerts"),                               # Independent
+            ("event", "Events"),                               # Independent
         ]
         
         deleted_summary = []
@@ -146,7 +146,7 @@ def clear_data(db_path: str = "./smoker.db"):
         print()
         print("🔍 Verifying deletion...")
         remaining_readings = safe_count("reading")
-        remaining_tc_readings = safe_count("thermocoupleread")
+        remaining_tc_readings = safe_count("thermocouplereading")
         remaining_alerts = safe_count("alert")
         remaining_events = safe_count("event")
         remaining_smokes = safe_count("smoke")
