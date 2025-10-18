@@ -1,9 +1,9 @@
-# Smoker Controller Makefile
+# PiTmaster Makefile
 
 .PHONY: help dev build install test clean
 
 help: ## Show this help message
-	@echo "Smoker Controller - Available commands:"
+	@echo "PiTmaster - Available commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 dev: ## Start development servers (backend + frontend)
@@ -69,7 +69,7 @@ clean: ## Clean build artifacts
 	@find . -name "*.pyc" -delete
 	@echo "Clean complete!"
 
-setup-pi: ## Setup Raspberry Pi for smoker controller
+setup-pi: ## Setup Raspberry Pi for PiTmaster
 	@echo "Setting up Raspberry Pi..."
 	@echo "1. Enable SPI interface:"
 	@echo "   sudo raspi-config -> Interface Options -> SPI -> Enable"

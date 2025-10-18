@@ -66,7 +66,7 @@ export function Header({ extraRight }: HeaderProps) {
       <div className="px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <h1 className="text-2xl font-bold text-gray-900">Smoker Controller</h1>
+            <h1 className="text-2xl font-bold text-gray-900">PiTmaster</h1>
             <div className="flex items-center space-x-2">
               <div className={`w-3 h-3 rounded-full ${getStatusColor()}`}></div>
               <span className="text-sm font-medium text-gray-700">

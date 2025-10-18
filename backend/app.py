@@ -1,4 +1,4 @@
-"""Main FastAPI application for the smoker controller."""
+"""Main FastAPI application for PiTmaster."""
 
 import os
 import sys
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="Smoker Controller API",
+    title="PiTmaster API",
     description="Raspberry Pi smoker controller with web GUI",
     version="0.1.0",
     lifespan=lifespan

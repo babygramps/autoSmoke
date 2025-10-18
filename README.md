@@ -1,4 +1,4 @@
-# Raspberry Pi Smoker Controller
+# PiTmaster - Raspberry Pi Smoker Controller
 
 A production-ready Raspberry Pi smoker controller with web GUI, featuring dual control modes (thermostat and PID), real-time monitoring, and comprehensive alerting.
 

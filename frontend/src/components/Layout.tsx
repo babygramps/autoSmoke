@@ -17,7 +17,7 @@ export function Layout({ children }: LayoutProps) {
       {/* Left Nav Sidebar (sticky and persistent across all pages) */}
       <nav className="w-64 bg-white shadow-sm sticky top-0 h-screen overflow-y-auto">
         <div className="p-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-6">Smoker Controller</h2>
+              <h2 className="text-lg font-semibold text-gray-800 mb-6">PiTmaster</h2>
           <ul className="space-y-2">
             {navItems.map((item) => (
               <li key={item.path}>

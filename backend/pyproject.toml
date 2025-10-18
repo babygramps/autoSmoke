@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "smoker-controller"
+name = "pitmaster"
 version = "0.1.0"
-description = "Raspberry Pi smoker controller with web GUI"
+description = "PiTmaster - Raspberry Pi smoker controller with web GUI"
 authors = ["Your Name <your.email@example.com>"]
 packages = []
 package-mode = false
