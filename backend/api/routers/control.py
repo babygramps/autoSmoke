@@ -322,3 +322,72 @@ async def apply_autotune_gains():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to apply auto-tune gains: {str(e)}")
+
+
+@router.post("/adaptive-pid/enable")
+async def enable_adaptive_pid():
+    """
+    Enable continuous adaptive PID tuning.
+    
+    When enabled, the controller will continuously monitor performance and make
+    small, gradual adjustments to optimize PID gains during operation.
+    """
+    try:
+        success = controller.enable_adaptive_pid()
+        
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot enable adaptive PID. Must be in time-proportional (PID) mode."
+            )
+        
+        return {
+            "status": "success",
+            "message": "Adaptive PID tuning enabled",
+            "adaptive_status": controller.get_adaptive_pid_status()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to enable adaptive PID: {str(e)}")
+
+
+@router.post("/adaptive-pid/disable")
+async def disable_adaptive_pid():
+    """
+    Disable continuous adaptive PID tuning.
+    
+    The controller will continue using the current PID gains without further adjustments.
+    """
+    try:
+        controller.disable_adaptive_pid()
+        
+        return {
+            "status": "success",
+            "message": "Adaptive PID tuning disabled",
+            "adaptive_status": controller.get_adaptive_pid_status()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to disable adaptive PID: {str(e)}")
+
+
+@router.get("/adaptive-pid/status")
+async def get_adaptive_pid_status():
+    """
+    Get current adaptive PID status.
+    
+    Returns information about adaptive tuning including:
+    - Whether it's enabled
+    - Number of adjustments made
+    - Recent adjustment history
+    - Time until next evaluation
+    """
+    try:
+        status = controller.get_adaptive_pid_status()
+        
+        return {
+            "status": "success",
+            "adaptive_pid": status
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get adaptive PID status: {str(e)}")

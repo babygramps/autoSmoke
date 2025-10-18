@@ -10,6 +10,7 @@ from core.config import settings, ControlMode
 from core.hardware import create_temp_sensor, create_relay_driver, SimTempSensor, MultiThermocoupleManager
 from core.pid import PIDController
 from core.pid_autotune import PIDAutoTuner, TuningRule, AutoTuneState
+from core.adaptive_pid import AdaptivePIDController
 from core.alerts import alert_manager
 from db.models import Smoke, Reading, Event, Settings as DBSettings, Thermocouple, ThermocoupleReading, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
 from db.session import get_session_sync
@@ -106,6 +107,12 @@ class SmokerController:
         self.autotuner: Optional[PIDAutoTuner] = None
         self.autotune_active = False
         self.autotune_auto_apply = True
+        
+        # Adaptive PID
+        self.adaptive_pid = AdaptivePIDController()
+        # Enable adaptive tuning by default if in PID mode
+        if self.control_mode == CONTROL_MODE_TIME_PROPORTIONAL:
+            self.adaptive_pid.enable()
         
         logger.info("SmokerController initialized")
     
@@ -457,6 +464,14 @@ class SmokerController:
             self.pid.reset()
             self.window_start_time = None
             self.window_on_duration = 0.0
+            
+            # Enable/disable adaptive PID based on mode
+            if mode == CONTROL_MODE_TIME_PROPORTIONAL:
+                self.adaptive_pid.enable()
+                logger.info("Adaptive PID enabled (switched to PID mode)")
+            else:
+                self.adaptive_pid.disable()
+                logger.info("Adaptive PID disabled (switched to thermostat mode)")
         
         await self._log_event(
             "control_mode_change",
@@ -632,6 +647,26 @@ class SmokerController:
         
         return self.autotuner.get_status()
     
+    def enable_adaptive_pid(self):
+        """Enable continuous adaptive PID tuning."""
+        if self.control_mode != CONTROL_MODE_TIME_PROPORTIONAL:
+            logger.warning("Cannot enable adaptive PID: not in time-proportional mode")
+            return False
+        
+        self.adaptive_pid.enable()
+        logger.info("Adaptive PID tuning enabled by user")
+        return True
+    
+    def disable_adaptive_pid(self):
+        """Disable continuous adaptive PID tuning."""
+        self.adaptive_pid.disable()
+        logger.info("Adaptive PID tuning disabled by user")
+        return True
+    
+    def get_adaptive_pid_status(self) -> dict:
+        """Get adaptive PID status."""
+        return self.adaptive_pid.get_status()
+    
     async def _control_loop(self):
         """Main control loop running at 1 Hz."""
         while self.running:
@@ -744,6 +779,41 @@ class SmokerController:
         Example: If PID output is 60% and time window is 10s,
         relay is ON for 6s and OFF for 4s in each 10s window.
         """
+        # Record sample for adaptive PID (only if not auto-tuning)
+        if not self.autotune_active:
+            error = self.setpoint_c - temp_c
+            self.adaptive_pid.record_sample(temp_c, self.setpoint_c, error)
+            
+            # Check if adaptive PID suggests an adjustment
+            adjustment = self.adaptive_pid.evaluate_and_adjust(
+                self.pid.kp,
+                self.pid.ki,
+                self.pid.kd
+            )
+            
+            if adjustment:
+                new_kp, new_ki, new_kd, reason = adjustment
+                # Apply the adaptive adjustment
+                await self.set_pid_gains(new_kp, new_ki, new_kd)
+                
+                # Save to database
+                try:
+                    with get_session_sync() as session:
+                        db_settings = session.get(DBSettings, 1)
+                        if db_settings:
+                            db_settings.kp = new_kp
+                            db_settings.ki = new_ki
+                            db_settings.kd = new_kd
+                            session.add(db_settings)
+                            session.commit()
+                except Exception as e:
+                    logger.error(f"Failed to save adaptive PID gains: {e}")
+                
+                await self._log_event(
+                    "adaptive_pid_adjustment",
+                    f"Adaptive PID: {reason} | Kp={new_kp:.4f}, Ki={new_ki:.4f}, Kd={new_kd:.4f}"
+                )
+        
         # Compute PID output (0-100%)
         self.pid_output = self.pid.compute(self.setpoint_c, temp_c)
         
@@ -1067,7 +1137,8 @@ class SmokerController:
             "sim_mode": self.sim_mode,
             "using_fallback_simulation": using_fallback,
             "autotune_active": self.autotune_active,
-            "autotune_status": self.get_autotune_status()
+            "autotune_status": self.get_autotune_status(),
+            "adaptive_pid": self.get_adaptive_pid_status()
         }
 
 

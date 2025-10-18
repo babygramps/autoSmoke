@@ -396,15 +396,102 @@ export function Controls({ status, onStatusUpdate }: ControlsProps) {
         </div>
       )}
 
+      {/* Adaptive PID Toggle */}
+      {status?.control_mode === 'time_proportional' && (
+        <div className="card">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                🧠 Adaptive PID
+                {status.adaptive_pid?.enabled && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-medium">
+                    ACTIVE
+                  </span>
+                )}
+              </h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Continuously optimizes PID gains in the background
+              </p>
+            </div>
+            
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={status.adaptive_pid?.enabled || false}
+                onChange={async (e) => {
+                  try {
+                    if (e.target.checked) {
+                      await apiClient.enableAdaptivePID()
+                      setMessage('Adaptive PID enabled')
+                    } else {
+                      await apiClient.disableAdaptivePID()
+                      setMessage('Adaptive PID disabled')
+                    }
+                    const newStatus = await apiClient.getStatus()
+                    onStatusUpdate(newStatus)
+                    setTimeout(() => setMessage(''), 3000)
+                  } catch (error) {
+                    setMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+                  }
+                }}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+            </label>
+          </div>
+          
+          {status.adaptive_pid?.enabled && (
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-gray-600">Adjustments Made:</span>
+                  <span className="ml-2 font-semibold text-gray-900">
+                    {status.adaptive_pid.adjustment_count || 0}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-600">Data Points:</span>
+                  <span className="ml-2 font-semibold text-gray-900">
+                    {status.adaptive_pid.data_points || 0}/300
+                  </span>
+                </div>
+              </div>
+              
+              {status.adaptive_pid.recent_adjustments && status.adaptive_pid.recent_adjustments.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-xs font-semibold text-gray-700 mb-2">Recent Adjustments:</div>
+                  <div className="space-y-2">
+                    {status.adaptive_pid.recent_adjustments.slice(-3).reverse().map((adj: any, i: number) => (
+                      <div key={i} className="text-xs bg-gray-50 p-2 rounded">
+                        <div className="font-medium text-gray-900">{adj.reason}</div>
+                        <div className="text-gray-600 mt-1">
+                          Kp: {adj.old_kp?.toFixed(2)} → {adj.new_kp?.toFixed(2)} | 
+                          Ki: {adj.old_ki?.toFixed(3)} → {adj.new_ki?.toFixed(3)} | 
+                          Kd: {adj.old_kd?.toFixed(1)} → {adj.new_kd?.toFixed(1)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              <div className="mt-3 text-xs text-gray-500">
+                💡 Adaptive PID monitors performance every 5 minutes and makes small adjustments when needed
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Info for why auto-tune is not available */}
       {status?.control_mode === 'thermostat' && (
         <div className="card bg-gray-50">
           <div className="flex items-center space-x-3">
             <span className="text-2xl">ℹ️</span>
             <div>
-              <div className="font-semibold text-gray-900">PID Auto-Tune Not Available</div>
+              <div className="font-semibold text-gray-900">PID Features Not Available</div>
               <p className="text-sm text-gray-600 mt-1">
-                Auto-tune requires Time-Proportional PID mode. Switch to PID mode in Settings to use auto-tune.
+                Auto-tune and Adaptive PID require Time-Proportional PID mode. Switch to PID mode in Settings to use these features.
               </p>
             </div>
           </div>

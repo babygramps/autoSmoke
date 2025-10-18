@@ -112,6 +112,19 @@ class ApiClient {
     return this.request('/control/autotune/apply', { method: 'POST' });
   }
 
+  // Adaptive PID endpoints
+  async enableAdaptivePID(): Promise<{ status: string; message: string; adaptive_status: any }> {
+    return this.request('/control/adaptive-pid/enable', { method: 'POST' });
+  }
+
+  async disableAdaptivePID(): Promise<{ status: string; message: string; adaptive_status: any }> {
+    return this.request('/control/adaptive-pid/disable', { method: 'POST' });
+  }
+
+  async getAdaptivePIDStatus(): Promise<{ status: string; adaptive_pid: any }> {
+    return this.request('/control/adaptive-pid/status');
+  }
+
   // Readings endpoints
   async getReadings(params: {
     smoke_id?: number;
