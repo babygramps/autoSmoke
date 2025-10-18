@@ -822,11 +822,27 @@ export function History() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Timestamp
                     </th>
+                    {/* Thermocouple columns - only show selected ones */}
+                    {thermocouples
+                      .filter(tc => selectedThermocouples.has(tc.id))
+                      .map(tc => (
+                        <th key={tc.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-3 h-3 rounded-full border border-white"
+                              style={{ backgroundColor: tc.color }}
+                            />
+                            <span>{tc.name} (°{units})</span>
+                            {tc.is_control && (
+                              <span className="text-xs px-1 py-0.5 rounded bg-primary-100 text-primary-700 font-medium">
+                                CTRL
+                              </span>
+                            )}
+                          </div>
+                        </th>
+                      ))}
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Temp (°F)
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Setpoint (°F)
+                      Setpoint (°{units})
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       PID Output
@@ -845,11 +861,27 @@ export function History() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {new Date(reading.ts).toLocaleString()}
                       </td>
+                      {/* Thermocouple data columns - only show selected ones */}
+                      {thermocouples
+                        .filter(tc => selectedThermocouples.has(tc.id))
+                        .map(tc => {
+                          const tcReading = reading.thermocouple_readings?.[tc.id]
+                          return (
+                            <td key={tc.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {tcReading && !tcReading.fault ? (
+                                <span className="font-medium">
+                                  {(units === 'F' ? tcReading.temp_f : tcReading.temp_c).toFixed(1)}°
+                                </span>
+                              ) : tcReading?.fault ? (
+                                <span className="text-danger-600 font-semibold">FAULT</span>
+                              ) : (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </td>
+                          )
+                        })}
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {reading.temp_f.toFixed(1)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {reading.setpoint_f.toFixed(1)}
+                        {(units === 'F' ? reading.setpoint_f : reading.setpoint_c).toFixed(1)}°
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {reading.pid_output.toFixed(1)}%
