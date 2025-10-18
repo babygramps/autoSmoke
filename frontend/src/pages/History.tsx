@@ -36,6 +36,7 @@ export function History() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [thermocouples, setThermocouples] = useState<Thermocouple[]>([])
+  const [selectedThermocouples, setSelectedThermocouples] = useState<Set<number>>(new Set())
   const [units, setUnits] = useState<'F' | 'C'>('F')
   const chartRef = useRef<ChartJS<'line', number[], string>>(null)
   
@@ -135,6 +136,8 @@ export function History() {
         setSmokes(smokesData.smokes)
         setThermocouples(enabledThermocouples)
         setUnits(settings.units)
+        // Select all thermocouples by default
+        setSelectedThermocouples(new Set(enabledThermocouples.map(tc => tc.id)))
       } catch (error) {
         console.error('Failed to load initial data:', error)
       }
@@ -306,27 +309,29 @@ export function History() {
   const buildDatasets = () => {
     const datasets: any[] = []
     
-    // Add a dataset for each thermocouple
-    thermocouples.forEach((tc) => {
-      const data = readings.map(point => {
-        const reading = point.thermocouple_readings?.[tc.id]
-        if (!reading || reading.fault) return null
-        return units === 'F' ? reading.temp_f : reading.temp_c
+    // Add a dataset for each selected thermocouple
+    thermocouples
+      .filter(tc => selectedThermocouples.has(tc.id))
+      .forEach((tc) => {
+        const data = readings.map(point => {
+          const reading = point.thermocouple_readings?.[tc.id]
+          if (!reading || reading.fault) return null
+          return units === 'F' ? reading.temp_f : reading.temp_c
+        })
+        
+        datasets.push({
+          label: `${tc.name} (${units})`,
+          data: data,
+          borderColor: tc.color,
+          backgroundColor: `${tc.color}20`, // Add transparency
+          borderWidth: tc.is_control ? 3 : 2, // Thicker line for control thermocouple
+          tension: 0.4,
+          pointRadius: 0,
+          pointHoverRadius: 6,
+          fill: false,
+          spanGaps: true, // Connect line even if there are null values
+        })
       })
-      
-      datasets.push({
-        label: `${tc.name} (${units})`,
-        data: data,
-        borderColor: tc.color,
-        backgroundColor: `${tc.color}20`, // Add transparency
-        borderWidth: tc.is_control ? 3 : 2, // Thicker line for control thermocouple
-        tension: 0.4,
-        pointRadius: 0,
-        pointHoverRadius: 6,
-        fill: false,
-        spanGaps: true, // Connect line even if there are null values
-      })
-    })
     
     // Add setpoint line
     datasets.push({
@@ -701,7 +706,7 @@ export function History() {
       {/* Temperature Chart */}
       {!loading && readings.length > 0 && (
         <div className="card">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex items-center justify-between flex-wrap gap-4">
             <h3 className="text-lg font-semibold text-gray-900">
               Temperature History
             </h3>
@@ -717,6 +722,68 @@ export function History() {
               </select>
             </div>
           </div>
+
+          {/* Thermocouple Selection */}
+          {thermocouples.length > 0 && (
+            <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-sm font-medium text-gray-700">
+                  Select Thermocouples to Display:
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSelectedThermocouples(new Set(thermocouples.map(tc => tc.id)))}
+                    className="text-xs btn btn-outline py-1 px-2"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={() => setSelectedThermocouples(new Set())}
+                    className="text-xs btn btn-outline py-1 px-2"
+                  >
+                    Deselect All
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {thermocouples.map((tc) => (
+                  <label
+                    key={tc.id}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 cursor-pointer transition-all ${
+                      selectedThermocouples.has(tc.id)
+                        ? 'border-primary-400 bg-primary-50'
+                        : 'border-gray-300 bg-white hover:border-gray-400'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedThermocouples.has(tc.id)}
+                      onChange={(e) => {
+                        const newSelected = new Set(selectedThermocouples)
+                        if (e.target.checked) {
+                          newSelected.add(tc.id)
+                        } else {
+                          newSelected.delete(tc.id)
+                        }
+                        setSelectedThermocouples(newSelected)
+                      }}
+                      className="cursor-pointer"
+                    />
+                    <div
+                      className="w-4 h-4 rounded-full border-2 border-white shadow-sm"
+                      style={{ backgroundColor: tc.color }}
+                    />
+                    <span className="text-sm font-medium text-gray-900">{tc.name}</span>
+                    {tc.is_control && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 font-medium">
+                        CONTROL
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           
           <div className="h-96">
             <Line ref={chartRef} data={chartConfig} options={chartOptions} plugins={[heaterBackgroundPlugin]} />
