@@ -68,14 +68,33 @@ async def get_filtering_stats():
     """
     try:
         # Access the thermocouple manager from the controller
-        if not hasattr(controller, 'thermocouple_manager') or controller.thermocouple_manager is None:
+        # The controller uses 'tc_manager' attribute name
+        if not hasattr(controller, 'tc_manager') or controller.tc_manager is None:
             return {
                 "status": "not_available",
                 "message": "Thermocouple manager not initialized",
                 "stats": {}
             }
         
-        stats = controller.thermocouple_manager.get_filtering_stats()
+        stats = controller.tc_manager.get_filtering_stats()
+        
+        # Check if running in simulation mode
+        if controller.sim_mode:
+            return {
+                "status": "simulation_mode",
+                "message": "Filtering stats not available in simulation mode (simulated sensors don't use filtering)",
+                "stats": {},
+                "sim_mode": True
+            }
+        
+        # If no filtered readers, return helpful message
+        if not stats:
+            return {
+                "status": "no_real_sensors",
+                "message": "No real thermocouples found (all sensors are using fallback simulation)",
+                "stats": {},
+                "sim_mode": False
+            }
         
         # Get thermocouple names for better display
         with get_session_sync() as session:
@@ -96,7 +115,8 @@ async def get_filtering_stats():
         
         return {
             "status": "success",
-            "stats": enriched_stats
+            "stats": enriched_stats,
+            "sim_mode": False
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get filtering stats: {str(e)}")
