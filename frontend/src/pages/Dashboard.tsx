@@ -15,6 +15,8 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { Link, useLocation } from 'react-router-dom'
+import { Header } from '../components/Header'
 import { Charts } from '../components/Charts'
 import { Controls } from '../components/Controls'
 import { Alarms } from '../components/Alarms'
@@ -216,6 +218,12 @@ export function Dashboard() {
     return saved ? JSON.parse(saved) : false
   })
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const location = useLocation()
+  const navItems = [
+    { path: '/', label: 'Dashboard', icon: '📊' },
+    { path: '/settings', label: 'Settings', icon: '⚙️' },
+    { path: '/history', label: 'History', icon: '📈' },
+  ]
 
   // Phase management state
   const [showPhaseTransitionModal, setShowPhaseTransitionModal] = useState(false)
@@ -583,68 +591,85 @@ export function Dashboard() {
   const visibleCount = Object.values(tileVisibility).filter(Boolean).length
 
   return (
-    <div className="relative">
-      {/* Header */}
-      <div className="sticky top-0 z-30 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 shadow-sm mb-6 -mx-6 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-            <div className="hidden sm:flex items-center gap-2 text-sm text-gray-600">
-              <span className="px-2 py-1 bg-primary-100 text-primary-700 rounded-md font-medium">
-                {visibleCount} active tiles
-              </span>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <button
-              onClick={toggleLock}
-              className={`btn btn-sm flex items-center gap-2 transition-all duration-200 ${
-                locked 
-                  ? 'btn-primary shadow-lg' 
-                  : 'btn-outline hover:scale-105'
-              }`}
-              title={locked ? "Unlock tiles (enable moving/resizing)" : "Lock tiles (disable moving/resizing)"}
-            >
-              {locked ? (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-                </svg>
-              )}
-              <span className="hidden sm:inline">{locked ? 'Locked' : 'Unlocked'}</span>
-            </button>
-
-            <button
-              onClick={resetLayout}
-              className="btn btn-outline btn-sm flex items-center gap-2 hover:scale-105 transition-transform"
-              title="Reset to default layout"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span className="hidden sm:inline">Reset</span>
-            </button>
-            
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className={`btn btn-sm flex items-center gap-2 transition-all duration-200 ${
-                sidebarOpen 
-                  ? 'btn-primary shadow-lg scale-105' 
-                  : 'btn-outline hover:scale-105'
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-              <span className="hidden sm:inline">Customize</span>
-            </button>
-          </div>
+    <div className="flex">
+      {/* Left Nav Sidebar (scrolls with page) */}
+      <nav className="w-64 bg-white shadow-sm sticky top-0 h-screen overflow-y-auto">
+        <div className="p-6">
+          <h2 className="text-lg font-semibold text-gray-800 mb-6">Smoker Controller</h2>
+          <ul className="space-y-2">
+            {navItems.map((item) => (
+              <li key={item.path}>
+                <Link
+                  to={item.path}
+                  className={`flex items-center px-4 py-2 rounded-lg transition-colors ${
+                    location.pathname === item.path
+                      ? 'bg-primary-100 text-primary-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <span className="mr-3">{item.icon}</span>
+                  {item.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
-      </div>
+      </nav>
+
+      {/* Main content */}
+      <div className="flex-1">
+        {/* Unified sticky header (app header + dashboard toolbar) */}
+        <div className="sticky top-0 z-40 bg-white">
+          <Header
+            extraRight={
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleLock}
+                  className={`btn btn-sm flex items-center gap-2 transition-all duration-200 ${
+                    locked 
+                      ? 'btn-primary shadow-lg' 
+                      : 'btn-outline hover:scale-105'
+                  }`}
+                  title={locked ? "Unlock tiles (enable moving/resizing)" : "Lock tiles (disable moving/resizing)"}
+                >
+                  {locked ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                  <span className="hidden sm:inline">{locked ? 'Locked' : 'Unlocked'}</span>
+                </button>
+                <button
+                  onClick={resetLayout}
+                  className="btn btn-outline btn-sm flex items-center gap-2 hover:scale-105 transition-transform"
+                  title="Reset to default layout"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span className="hidden sm:inline">Reset</span>
+                </button>
+                <button
+                  onClick={() => setSidebarOpen(!sidebarOpen)}
+                  className={`btn btn-sm flex items-center gap-2 transition-all duration-200 ${
+                    sidebarOpen 
+                      ? 'btn-primary shadow-lg scale-105' 
+                      : 'btn-outline hover:scale-105'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                  <span className="hidden sm:inline">Customize</span>
+                </button>
+              </div>
+            }
+          />
+        </div>
 
       {/* Sidebar */}
       <div className={`fixed inset-y-0 right-0 w-80 bg-white shadow-2xl border-l border-gray-200 z-40 transform transition-transform duration-300 ease-in-out ${
@@ -828,6 +853,7 @@ export function Dashboard() {
           }}
         />
       )}
+      </div>
     </div>
   )
 }

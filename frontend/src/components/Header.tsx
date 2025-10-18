@@ -1,8 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, ReactNode } from 'react'
 import { apiClient, useWebSocket } from '../api/client'
 import { ControllerStatus } from '../types'
 
-export function Header() {
+interface HeaderProps {
+  extraRight?: ReactNode
+}
+
+export function Header({ extraRight }: HeaderProps) {
   const [status, setStatus] = useState<ControllerStatus | null>(null)
   const [connected, setConnected] = useState(false)
 
@@ -101,6 +105,13 @@ export function Header() {
                 <span className="text-sm font-medium text-danger-600">
                   {status.alert_summary.count} alert{status.alert_summary.count !== 1 ? 's' : ''}
                 </span>
+              </div>
+            )}
+
+            {/* Extra actions from page (e.g., Unlocked/Reset/Customize) */}
+            {extraRight && (
+              <div className="pl-4 ml-2 border-l border-gray-200 flex items-center gap-2">
+                {extraRight}
               </div>
             )}
           </div>
