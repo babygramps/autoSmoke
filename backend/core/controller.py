@@ -9,6 +9,7 @@ from typing import Optional
 from core.config import settings, ControlMode
 from core.hardware import create_temp_sensor, create_relay_driver, SimTempSensor, MultiThermocoupleManager
 from core.pid import PIDController
+from core.pid_autotune import PIDAutoTuner, TuningRule, AutoTuneState
 from core.alerts import alert_manager
 from db.models import Smoke, Reading, Event, Settings as DBSettings, Thermocouple, ThermocoupleReading, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
 from db.session import get_session_sync
@@ -100,6 +101,10 @@ class SmokerController:
         # Statistics
         self.loop_count = 0
         self.last_loop_time = None
+        
+        # Auto-tuner
+        self.autotuner: Optional[PIDAutoTuner] = None
+        self.autotune_active = False
         
         logger.info("SmokerController initialized")
     
@@ -480,6 +485,148 @@ class SmokerController:
         await self._log_event("boost_disabled", "Boost mode disabled")
         logger.info("Boost mode disabled")
     
+    async def start_autotune(
+        self,
+        output_step: float = 50.0,
+        lookback_seconds: float = 60.0,
+        noise_band: float = 0.5,
+        tuning_rule: TuningRule = TuningRule.TYREUS_LUYBEN
+    ) -> bool:
+        """
+        Start PID auto-tuning process.
+        
+        Args:
+            output_step: Relay step size (% of output, typically 30-60%)
+            lookback_seconds: Lookback window for peak detection
+            noise_band: Temperature noise band to ignore (degrees C)
+            tuning_rule: Which tuning rule to use
+            
+        Returns:
+            True if auto-tune started successfully, False otherwise
+        """
+        if not self.running:
+            logger.error("Cannot start auto-tune: controller not running")
+            return False
+        
+        if self.autotune_active:
+            logger.warning("Auto-tune already active")
+            return False
+        
+        # Cannot auto-tune during an active smoke session with phases
+        if self.active_smoke_id:
+            logger.error("Cannot start auto-tune: active smoke session in progress")
+            return False
+        
+        # Cannot auto-tune in thermostat mode (needs PID mode)
+        if self.control_mode == CONTROL_MODE_THERMOSTAT:
+            logger.error("Cannot start auto-tune: must be in time-proportional (PID) mode")
+            return False
+        
+        # Create auto-tuner instance
+        self.autotuner = PIDAutoTuner(
+            setpoint=self.setpoint_c,
+            output_step=output_step,
+            lookback_seconds=lookback_seconds,
+            noise_band=noise_band,
+            sample_time=self._loop_interval,
+            tuning_rule=tuning_rule
+        )
+        
+        # Start the auto-tuning process
+        if self.autotuner.start():
+            self.autotune_active = True
+            await self._log_event(
+                "autotune_start",
+                f"Auto-tune started: setpoint={self.setpoint_f:.1f}°F, rule={tuning_rule.value}"
+            )
+            logger.info(f"Auto-tune started with rule: {tuning_rule.value}")
+            return True
+        else:
+            self.autotuner = None
+            return False
+    
+    async def cancel_autotune(self) -> bool:
+        """
+        Cancel the auto-tuning process.
+        
+        Returns:
+            True if cancelled successfully, False if no auto-tune active
+        """
+        if not self.autotune_active or not self.autotuner:
+            logger.warning("No auto-tune active to cancel")
+            return False
+        
+        self.autotuner.cancel()
+        self.autotune_active = False
+        
+        await self._log_event("autotune_cancel", "Auto-tune cancelled by user")
+        logger.info("Auto-tune cancelled")
+        
+        self.autotuner = None
+        return True
+    
+    async def apply_autotune_gains(self) -> bool:
+        """
+        Apply the gains calculated by auto-tuner to the PID controller.
+        
+        Returns:
+            True if gains applied successfully, False otherwise
+        """
+        if not self.autotuner:
+            logger.error("No auto-tuner instance available")
+            return False
+        
+        gains = self.autotuner.get_gains()
+        if not gains:
+            logger.error("Auto-tuner has no valid gains to apply")
+            return False
+        
+        kp, ki, kd = gains
+        
+        # Apply gains to PID controller
+        await self.set_pid_gains(kp, ki, kd)
+        
+        # Save to database
+        try:
+            with get_session_sync() as session:
+                db_settings = session.get(DBSettings, 1)
+                if db_settings:
+                    db_settings.kp = kp
+                    db_settings.ki = ki
+                    db_settings.kd = kd
+                    session.add(db_settings)
+                    session.commit()
+                    logger.info(f"Auto-tuned gains saved to database: Kp={kp:.4f}, Ki={ki:.4f}, Kd={kd:.4f}")
+                else:
+                    logger.error("No database settings found to save gains")
+                    return False
+        except Exception as e:
+            logger.error(f"Failed to save auto-tuned gains to database: {e}")
+            return False
+        
+        await self._log_event(
+            "autotune_apply",
+            f"Auto-tuned PID gains applied: Kp={kp:.4f}, Ki={ki:.4f}, Kd={kd:.4f}"
+        )
+        
+        # Clear auto-tuner
+        self.autotune_active = False
+        self.autotuner = None
+        
+        return True
+    
+    def get_autotune_status(self) -> Optional[dict]:
+        """
+        Get current auto-tune status.
+        
+        Returns:
+            Status dict if auto-tune active, None otherwise
+        """
+        if not self.autotuner:
+            return None
+        
+        return self.autotuner.get_status()
+    
     async def _control_loop(self):
         """Main control loop running at 1 Hz."""
         while self.running:
@@ -520,6 +667,11 @@ class SmokerController:
             self.relay_state = False
             self.output_bool = False
             
+            # Cancel auto-tune if active (sensor fault is critical)
+            if self.autotune_active:
+                logger.error("Sensor fault detected, cancelling auto-tune")
+                await self.cancel_autotune()
+            
             await self._log_event("sensor_fault", f"Control thermocouple reading failed (ID={self.control_tc_id})")
             logger.error(f"Control thermocouple reading failed (ID={self.control_tc_id})")
             return
@@ -534,7 +686,10 @@ class SmokerController:
             await self.disable_boost()
         
         # Determine relay state
-        if self.boost_active:
+        if self.autotune_active and self.autotuner:
+            # Auto-tune mode - use auto-tuner output
+            await self._autotune_control(temp_c)
+        elif self.boost_active:
             # Boost mode - force relay ON
             self.output_bool = True
             await self._set_relay_state(True)
@@ -611,6 +766,58 @@ class SmokerController:
         
         # Apply relay state (no min on/off timing for time-proportional mode)
         await self._set_relay_state(self.output_bool)
+    
+    async def _autotune_control(self, temp_c: float):
+        """
+        Auto-tune control mode - use auto-tuner to determine relay state.
+        
+        The auto-tuner uses relay feedback to induce oscillations and
+        measure system characteristics for PID gain calculation.
+        """
+        if not self.autotuner:
+            logger.error("Auto-tune control called but no auto-tuner instance")
+            self.autotune_active = False
+            return
+        
+        # Update auto-tuner with current temperature
+        output, is_complete = self.autotuner.update(temp_c)
+        
+        # Convert output percentage to boolean for relay
+        # output > 0 means relay should be ON
+        self.output_bool = output > 0
+        self.pid_output = output  # For logging
+        
+        # Apply relay state
+        await self._set_relay_state(self.output_bool)
+        
+        # Check if auto-tune completed
+        if is_complete:
+            status = self.autotuner.get_status()
+            state = status.get("state", "unknown")
+            
+            if state == AutoTuneState.SUCCEEDED.value:
+                gains = self.autotuner.get_gains()
+                if gains:
+                    kp, ki, kd = gains
+                    logger.info(f"🎉 Auto-tune COMPLETED successfully!")
+                    logger.info(f"   Calculated gains: Kp={kp:.4f}, Ki={ki:.4f}, Kd={kd:.4f}")
+                    logger.info(f"   System characteristics: Ku={self.autotuner.ku:.4f}, Pu={self.autotuner.pu:.2f}s")
+                    
+                    await self._log_event(
+                        "autotune_complete",
+                        f"Auto-tune completed: Kp={kp:.4f}, Ki={ki:.4f}, Kd={kd:.4f}"
+                    )
+                    
+                    # Note: Gains are NOT automatically applied - user must explicitly apply them
+                    logger.info("   Use apply_autotune_gains() to apply these values")
+            else:
+                logger.warning(f"Auto-tune completed with state: {state}")
+                await self._log_event(
+                    "autotune_failed",
+                    f"Auto-tune failed or cancelled: {state}"
+                )
+                self.autotune_active = False
+                self.autotuner = None
     
     async def _apply_relay_with_timing(self, desired_state: bool):
         """Apply relay control with minimum on/off timing (for thermostat mode)."""
@@ -848,7 +1055,9 @@ class SmokerController:
             "current_phase": current_phase,
             "pending_phase_transition": pending_phase_transition,
             "sim_mode": self.sim_mode,
-            "using_fallback_simulation": using_fallback
+            "using_fallback_simulation": using_fallback,
+            "autotune_active": self.autotune_active,
+            "autotune_status": self.get_autotune_status()
         }
 
 

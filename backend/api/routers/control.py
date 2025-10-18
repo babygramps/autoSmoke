@@ -8,6 +8,7 @@ from datetime import datetime
 from core.controller import controller
 from core.alerts import alert_manager
 from core.config import settings
+from core.pid_autotune import TuningRule
 from db.models import Settings as DBSettings
 from db.session import get_session_sync
 
@@ -30,6 +31,13 @@ class PIDGainsRequest(BaseModel):
 
 class BoostRequest(BaseModel):
     duration_s: Optional[int] = None
+
+
+class AutoTuneRequest(BaseModel):
+    output_step: float = 50.0  # Relay step size (% of output)
+    lookback_seconds: float = 60.0  # Lookback window for peak detection
+    noise_band: float = 0.5  # Temperature noise band (degrees C)
+    tuning_rule: str = TuningRule.TYREUS_LUYBEN.value  # Which tuning rule to use
 
 
 @router.post("/start")
@@ -160,3 +168,155 @@ async def disable_boost():
         return {"status": "success", "message": "Boost mode disabled"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to disable boost: {str(e)}")
+
+
+@router.post("/autotune/start")
+async def start_autotune(request: AutoTuneRequest):
+    """
+    Start PID auto-tuning process.
+    
+    This will use the relay oscillation method to automatically determine optimal
+    PID gains. The controller must be running and in time-proportional (PID) mode.
+    No active smoke session can be in progress.
+    
+    The auto-tuner will induce oscillations in the system and measure the response
+    to calculate appropriate Kp, Ki, and Kd values based on the selected tuning rule.
+    """
+    try:
+        # Validate tuning rule
+        try:
+            tuning_rule = TuningRule(request.tuning_rule)
+        except ValueError:
+            valid_rules = [rule.value for rule in TuningRule]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid tuning rule. Must be one of: {', '.join(valid_rules)}"
+            )
+        
+        # Validate parameters
+        if request.output_step <= 0 or request.output_step > 100:
+            raise HTTPException(status_code=400, detail="Output step must be between 0 and 100")
+        
+        if request.lookback_seconds <= 0:
+            raise HTTPException(status_code=400, detail="Lookback seconds must be positive")
+        
+        if request.noise_band < 0:
+            raise HTTPException(status_code=400, detail="Noise band must be non-negative")
+        
+        # Start auto-tune
+        success = await controller.start_autotune(
+            output_step=request.output_step,
+            lookback_seconds=request.lookback_seconds,
+            noise_band=request.noise_band,
+            tuning_rule=tuning_rule
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to start auto-tune. Check that controller is running, "
+                       "in PID mode, and no smoke session is active."
+            )
+        
+        return {
+            "status": "success",
+            "message": "Auto-tune started successfully",
+            "tuning_rule": tuning_rule.value,
+            "parameters": {
+                "output_step": request.output_step,
+                "lookback_seconds": request.lookback_seconds,
+                "noise_band": request.noise_band
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start auto-tune: {str(e)}")
+
+
+@router.post("/autotune/cancel")
+async def cancel_autotune():
+    """
+    Cancel the auto-tuning process.
+    
+    This will stop the auto-tuning process and return control to normal PID operation.
+    Any calculated gains will be discarded.
+    """
+    try:
+        success = await controller.cancel_autotune()
+        
+        if not success:
+            raise HTTPException(status_code=400, detail="No auto-tune process is active")
+        
+        return {
+            "status": "success",
+            "message": "Auto-tune cancelled successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to cancel auto-tune: {str(e)}")
+
+
+@router.get("/autotune/status")
+async def get_autotune_status():
+    """
+    Get current auto-tune status.
+    
+    Returns information about the auto-tuning process including:
+    - Current state (idle, running, succeeded, failed)
+    - Elapsed time
+    - Number of cycles completed
+    - Calculated gains (if completed successfully)
+    """
+    try:
+        status = controller.get_autotune_status()
+        
+        if not status:
+            return {
+                "active": False,
+                "message": "No auto-tune process is active"
+            }
+        
+        return {
+            "active": True,
+            "status": status
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get auto-tune status: {str(e)}")
+
+
+@router.post("/autotune/apply")
+async def apply_autotune_gains():
+    """
+    Apply the gains calculated by the auto-tuner.
+    
+    This will update the PID controller with the calculated gains and save them
+    to the database. The auto-tuner must have completed successfully before
+    calling this endpoint.
+    """
+    try:
+        success = await controller.apply_autotune_gains()
+        
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to apply gains. Auto-tune must complete successfully first."
+            )
+        
+        # Get the applied gains
+        pid_state = controller.pid.get_state()
+        
+        return {
+            "status": "success",
+            "message": "Auto-tuned PID gains applied successfully",
+            "gains": {
+                "kp": pid_state["kp"],
+                "ki": pid_state["ki"],
+                "kd": pid_state["kd"]
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to apply auto-tune gains: {str(e)}")
