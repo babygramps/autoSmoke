@@ -298,7 +298,11 @@ export interface SmokeCreate {
   preheat_stability_min?: number;
   stability_range_f?: number;
   cook_duration_min?: number;
+  cook_stability_min?: number;
+  cook_stability_range_f?: number;
   finish_duration_min?: number;
+  finish_stability_min?: number;
+  finish_stability_range_f?: number;
 }
 
 export interface SmokeUpdate {
@@ -314,7 +318,11 @@ export interface SmokeUpdate {
   preheat_stability_min?: number;
   stability_range_f?: number;
   cook_duration_min?: number;
+  cook_stability_min?: number;
+  cook_stability_range_f?: number;
   finish_duration_min?: number;
+  finish_stability_min?: number;
+  finish_stability_range_f?: number;
 }
 
 export interface PhaseUpdate {

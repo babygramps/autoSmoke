@@ -33,9 +33,13 @@ class SmokeCreate(BaseModel):
     # Phase timing controls
     preheat_duration_min: int = 60  # Maximum preheat time
     preheat_stability_min: int = 10  # How long to hold stable before advancing
-    stability_range_f: float = 5.0  # Temperature stability range (±°F)
+    stability_range_f: float = 5.0  # Temperature stability range (±°F) for preheat
     cook_duration_min: int = 360  # Maximum cook phase time (6 hours default)
+    cook_stability_min: int = 10  # Cook phase stability hold time
+    cook_stability_range_f: float = 10.0  # Cook phase temperature stability range (±°F)
     finish_duration_min: int = 120  # Maximum finish phase time (2 hours default)
+    finish_stability_min: int = 10  # Finish phase stability hold time
+    finish_stability_range_f: float = 10.0  # Finish phase temperature stability range (±°F)
 
 
 class SmokeUpdate(BaseModel):
@@ -52,7 +56,11 @@ class SmokeUpdate(BaseModel):
     preheat_stability_min: Optional[int] = None
     stability_range_f: Optional[float] = None
     cook_duration_min: Optional[int] = None
+    cook_stability_min: Optional[int] = None
+    cook_stability_range_f: Optional[float] = None
     finish_duration_min: Optional[int] = None
+    finish_stability_min: Optional[int] = None
+    finish_stability_range_f: Optional[float] = None
 
 
 class PhaseUpdate(BaseModel):
@@ -150,8 +158,13 @@ async def create_smoke(smoke_create: SmokeCreate):
                 "enable_stall_detection": smoke_create.enable_stall_detection,
                 "preheat_duration_min": smoke_create.preheat_duration_min,
                 "preheat_stability_min": smoke_create.preheat_stability_min,
+                "stability_range_f": smoke_create.stability_range_f,
                 "cook_duration_min": smoke_create.cook_duration_min,
-                "finish_duration_min": smoke_create.finish_duration_min
+                "cook_stability_min": smoke_create.cook_stability_min,
+                "cook_stability_range_f": smoke_create.cook_stability_range_f,
+                "finish_duration_min": smoke_create.finish_duration_min,
+                "finish_stability_min": smoke_create.finish_stability_min,
+                "finish_stability_range_f": smoke_create.finish_stability_range_f
             }
             
             # Create new smoke session
@@ -194,11 +207,18 @@ async def create_smoke(smoke_create: SmokeCreate):
                 elif phase_config["phase_name"] in ["load_recover", "smoke"]:
                     # Cook phases use cook_duration_min
                     conditions["max_duration_min"] = smoke_create.cook_duration_min
-                    # Apply stability range to load_recover phase as well
+                    # Apply cook phase stability settings
+                    if "stability_duration_min" in conditions:
+                        conditions["stability_duration_min"] = smoke_create.cook_stability_min
                     if "stability_range_f" in conditions:
-                        conditions["stability_range_f"] = smoke_create.stability_range_f
+                        conditions["stability_range_f"] = smoke_create.cook_stability_range_f
                 elif phase_config["phase_name"] == "finish_hold":
                     conditions["max_duration_min"] = smoke_create.finish_duration_min
+                    # Apply finish phase stability settings
+                    if "stability_duration_min" in conditions:
+                        conditions["stability_duration_min"] = smoke_create.finish_stability_min
+                    if "stability_range_f" in conditions:
+                        conditions["stability_range_f"] = smoke_create.finish_stability_range_f
                 
                 # Disable stall phase if stall detection is off
                 if not smoke_create.enable_stall_detection and phase_config["phase_name"] == "stall":
@@ -334,10 +354,26 @@ async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
                     config["cook_duration_min"] = smoke_update.cook_duration_min
                     config_updated = True
                     updates.append(f"cook_duration={smoke_update.cook_duration_min}min")
+                if smoke_update.cook_stability_min is not None:
+                    config["cook_stability_min"] = smoke_update.cook_stability_min
+                    config_updated = True
+                    updates.append(f"cook_stability={smoke_update.cook_stability_min}min")
+                if smoke_update.cook_stability_range_f is not None:
+                    config["cook_stability_range_f"] = smoke_update.cook_stability_range_f
+                    config_updated = True
+                    updates.append(f"cook_stability_range=±{smoke_update.cook_stability_range_f}°F")
                 if smoke_update.finish_duration_min is not None:
                     config["finish_duration_min"] = smoke_update.finish_duration_min
                     config_updated = True
                     updates.append(f"finish_duration={smoke_update.finish_duration_min}min")
+                if smoke_update.finish_stability_min is not None:
+                    config["finish_stability_min"] = smoke_update.finish_stability_min
+                    config_updated = True
+                    updates.append(f"finish_stability={smoke_update.finish_stability_min}min")
+                if smoke_update.finish_stability_range_f is not None:
+                    config["finish_stability_range_f"] = smoke_update.finish_stability_range_f
+                    config_updated = True
+                    updates.append(f"finish_stability_range=±{smoke_update.finish_stability_range_f}°F")
                 
                 if config_updated:
                     smoke.recipe_config = json.dumps(config)
@@ -373,17 +409,29 @@ async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
                             if smoke_update.cook_duration_min is not None:
                                 conditions["max_duration_min"] = smoke_update.cook_duration_min
                                 timing_updated = True
+                            if smoke_update.cook_stability_min is not None and "stability_duration_min" in conditions:
+                                conditions["stability_duration_min"] = smoke_update.cook_stability_min
+                                timing_updated = True
+                            if smoke_update.cook_stability_range_f is not None and "stability_range_f" in conditions:
+                                conditions["stability_range_f"] = smoke_update.cook_stability_range_f
+                                timing_updated = True
                             if timing_updated:
                                 phase.completion_conditions = json.dumps(conditions)
-                                logger.info(f"Updated {phase.phase_name} phase duration: max={conditions.get('max_duration_min')}min")
+                                logger.info(f"Updated {phase.phase_name} phase timing: max={conditions.get('max_duration_min')}min, stability={conditions.get('stability_duration_min')}min, range=±{conditions.get('stability_range_f')}°F")
                         
                         elif phase.phase_name == "finish_hold":
                             if smoke_update.finish_duration_min is not None:
                                 conditions["max_duration_min"] = smoke_update.finish_duration_min
                                 timing_updated = True
+                            if smoke_update.finish_stability_min is not None and "stability_duration_min" in conditions:
+                                conditions["stability_duration_min"] = smoke_update.finish_stability_min
+                                timing_updated = True
+                            if smoke_update.finish_stability_range_f is not None and "stability_range_f" in conditions:
+                                conditions["stability_range_f"] = smoke_update.finish_stability_range_f
+                                timing_updated = True
                             if timing_updated:
                                 phase.completion_conditions = json.dumps(conditions)
-                                logger.info(f"Updated finish phase duration: max={conditions.get('max_duration_min')}min")
+                                logger.info(f"Updated finish phase timing: max={conditions.get('max_duration_min')}min, stability={conditions.get('stability_duration_min')}min, range=±{conditions.get('stability_range_f')}°F")
                         elif smoke_update.cook_temp_f is not None and phase.phase_name in ["load_recover", "smoke"]:
                             phase.target_temp_f = smoke_update.cook_temp_f
                             logger.info(f"Updated {phase.phase_name} phase target to {smoke_update.cook_temp_f}°F")
@@ -430,8 +478,13 @@ async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
                         "enable_stall_detection": config.get("enable_stall_detection"),
                         "preheat_duration_min": config.get("preheat_duration_min"),
                         "preheat_stability_min": config.get("preheat_stability_min"),
+                        "stability_range_f": config.get("stability_range_f"),
                         "cook_duration_min": config.get("cook_duration_min"),
-                        "finish_duration_min": config.get("finish_duration_min")
+                        "cook_stability_min": config.get("cook_stability_min"),
+                        "cook_stability_range_f": config.get("cook_stability_range_f"),
+                        "finish_duration_min": config.get("finish_duration_min"),
+                        "finish_stability_min": config.get("finish_stability_min"),
+                        "finish_stability_range_f": config.get("finish_stability_range_f")
                     }
                 except:
                     pass

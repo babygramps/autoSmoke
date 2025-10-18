@@ -138,6 +138,15 @@ class RealRelayDriver:
             logger.info(f"Initializing real GPIO relay on pin {self.pin}, active_high={self.active_high}")
             from gpiozero import DigitalOutputDevice
             
+            # Clean up existing GPIO device if it exists
+            if self.gpio_device is not None:
+                logger.info(f"Cleaning up existing GPIO device on pin {self.pin}")
+                try:
+                    self.gpio_device.close()
+                except Exception as e:
+                    logger.warning(f"Error closing existing GPIO device: {e}")
+                self.gpio_device = None
+            
             self.gpio_device = DigitalOutputDevice(
                 pin=self.pin,
                 active_high=self.active_high,
@@ -153,6 +162,31 @@ class RealRelayDriver:
             logger.error(f"✗ Failed to initialize GPIO: {e}")
             logger.warning("Falling back to simulation mode for relay")
             self.gpio_device = None
+    
+    def close(self):
+        """Clean up GPIO resources."""
+        if self.gpio_device is not None:
+            try:
+                logger.info(f"Closing GPIO device on pin {self.pin}")
+                self.gpio_device.close()
+                self.gpio_device = None
+            except Exception as e:
+                logger.error(f"Error closing GPIO device: {e}")
+    
+    def reinitialize(self, pin: int = None, active_high: bool = None):
+        """Reinitialize GPIO with new settings."""
+        # Close existing device
+        self.close()
+        
+        # Update settings if provided
+        if pin is not None:
+            self.pin = pin
+        if active_high is not None:
+            self.active_high = active_high
+        
+        # Reinitialize
+        logger.info(f"Reinitializing GPIO: pin={self.pin}, active_high={self.active_high}")
+        self._initialize_gpio()
     
     async def set_state(self, state: bool) -> None:
         """Set relay state."""
@@ -196,6 +230,10 @@ class SimRelayDriver:
     async def get_state(self) -> bool:
         """Get simulated relay state."""
         return self.current_state
+    
+    def close(self):
+        """Clean up resources (no-op for simulator)."""
+        logger.debug("Simulated relay driver closed")
 
 
 class FilteredThermocoupleReader:

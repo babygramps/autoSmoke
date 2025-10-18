@@ -34,7 +34,11 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
   const [preheatStability, setPreheatStability] = useState(10)
   const [stabilityRange, setStabilityRange] = useState(5)  // ±5°F default
   const [cookDuration, setCookDuration] = useState(360)  // 6 hours default
+  const [cookStability, setCookStability] = useState(10)  // 10 min default
+  const [cookStabilityRange, setCookStabilityRange] = useState(10)  // ±10°F default
   const [finishDuration, setFinishDuration] = useState(120)  // 2 hours default
+  const [finishStability, setFinishStability] = useState(10)  // 10 min default
+  const [finishStabilityRange, setFinishStabilityRange] = useState(10)  // ±10°F default
   const [meatTargetTemp, setMeatTargetTemp] = useState<number | undefined>(undefined)
   const [meatProbeId, setMeatProbeId] = useState<number | undefined>(undefined)
   const [enableStallDetection, setEnableStallDetection] = useState(true)
@@ -109,7 +113,11 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
         preheat_stability_min: preheatStability,
         stability_range_f: stabilityRange,
         cook_duration_min: cookDuration,
+        cook_stability_min: cookStability,
+        cook_stability_range_f: cookStabilityRange,
         finish_duration_min: finishDuration,
+        finish_stability_min: finishStability,
+        finish_stability_range_f: finishStabilityRange,
         meat_target_temp_f: meatTargetTemp,
         meat_probe_tc_id: meatProbeId,
         enable_stall_detection: enableStallDetection
@@ -446,21 +454,49 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
             {/* Cook Phase Timing */}
             <div className="mb-4">
               <div className="text-xs font-medium text-gray-600 mb-2">Cook Phase (Load & Smoke)</div>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  Max Duration (min)
-                </label>
-                <input
-                  type="number"
-                  value={cookDuration}
-                  onChange={(e) => setCookDuration(Number(e.target.value))}
-                  className="input"
-                  min={60}
-                  max={720}
-                  step={30}
-                />
-                <div className="text-xs text-gray-500 mt-1">
-                  Default: 360 min (6 hours)
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Max Time (min)
+                  </label>
+                  <input
+                    type="number"
+                    value={cookDuration}
+                    onChange={(e) => setCookDuration(Number(e.target.value))}
+                    className="input"
+                    min={60}
+                    max={720}
+                    step={30}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Hold Stable (min)
+                  </label>
+                  <input
+                    type="number"
+                    value={cookStability}
+                    onChange={(e) => setCookStability(Number(e.target.value))}
+                    className="input"
+                    min={3}
+                    max={30}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Stability (±°F)
+                  </label>
+                  <input
+                    type="number"
+                    value={cookStabilityRange}
+                    onChange={(e) => setCookStabilityRange(Number(e.target.value))}
+                    className="input"
+                    min={1}
+                    max={20}
+                  />
+                  <div className="text-xs text-gray-500 mt-1">
+                    Temp must stay within ±{cookStabilityRange}°F
+                  </div>
                 </div>
               </div>
             </div>
@@ -468,21 +504,49 @@ export function SmokeSession({ onSessionChange }: SmokeSessionProps) {
             {/* Finish Phase Timing */}
             <div>
               <div className="text-xs font-medium text-gray-600 mb-2">Finish & Hold Phase</div>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  Max Duration (min)
-                </label>
-                <input
-                  type="number"
-                  value={finishDuration}
-                  onChange={(e) => setFinishDuration(Number(e.target.value))}
-                  className="input"
-                  min={30}
-                  max={360}
-                  step={15}
-                />
-                <div className="text-xs text-gray-500 mt-1">
-                  Default: 120 min (2 hours)
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Max Time (min)
+                  </label>
+                  <input
+                    type="number"
+                    value={finishDuration}
+                    onChange={(e) => setFinishDuration(Number(e.target.value))}
+                    className="input"
+                    min={30}
+                    max={360}
+                    step={15}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Hold Stable (min)
+                  </label>
+                  <input
+                    type="number"
+                    value={finishStability}
+                    onChange={(e) => setFinishStability(Number(e.target.value))}
+                    className="input"
+                    min={3}
+                    max={30}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Stability (±°F)
+                  </label>
+                  <input
+                    type="number"
+                    value={finishStabilityRange}
+                    onChange={(e) => setFinishStabilityRange(Number(e.target.value))}
+                    className="input"
+                    min={1}
+                    max={20}
+                  />
+                  <div className="text-xs text-gray-500 mt-1">
+                    Temp must stay within ±{finishStabilityRange}°F
+                  </div>
                 </div>
               </div>
             </div>

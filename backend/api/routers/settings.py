@@ -104,27 +104,37 @@ async def update_settings(settings_update: SettingsUpdate):
             session.refresh(db_settings)
             
             # Handle hardware setting changes (sim_mode, gpio_pin, relay_active_high)
-            hardware_changed = False
-            if settings_update.sim_mode is not None and settings_update.sim_mode != controller.sim_mode:
-                hardware_changed = True
-            if settings_update.gpio_pin is not None or settings_update.relay_active_high is not None:
-                hardware_changed = True
+            sim_mode_changed = settings_update.sim_mode is not None and settings_update.sim_mode != controller.sim_mode
+            gpio_settings_changed = settings_update.gpio_pin is not None or settings_update.relay_active_high is not None
             
-            if hardware_changed:
+            if sim_mode_changed:
+                # Sim mode change requires full hardware reload and controller must be stopped
                 if controller.running:
-                    logger.warning("Cannot reload hardware while controller is running.")
-                    logger.info("Database updated, but hardware will not be reloaded until controller is stopped and restarted.")
+                    logger.warning("Cannot change sim_mode while controller is running.")
+                    logger.info("Database updated, but sim_mode will not change until controller is stopped and restarted.")
                 else:
-                    new_sim_mode = settings_update.sim_mode if settings_update.sim_mode is not None else controller.sim_mode
+                    new_sim_mode = settings_update.sim_mode
                     new_gpio_pin = settings_update.gpio_pin if settings_update.gpio_pin is not None else db_settings.gpio_pin
                     new_relay_active_high = settings_update.relay_active_high if settings_update.relay_active_high is not None else db_settings.relay_active_high
                     
-                    logger.info(f"Hardware settings changed: sim_mode={new_sim_mode}, gpio_pin={new_gpio_pin}, active_high={new_relay_active_high}")
+                    logger.info(f"Sim mode changed: sim_mode={new_sim_mode}, gpio_pin={new_gpio_pin}, active_high={new_relay_active_high}")
                     success = controller.reload_hardware(new_sim_mode, new_gpio_pin, new_relay_active_high)
                     if success:
-                        logger.info("Hardware reloaded successfully with new settings")
+                        logger.info("Hardware reloaded successfully with new sim_mode")
                     else:
                         logger.error("Failed to reload hardware")
+            
+            elif gpio_settings_changed:
+                # GPIO settings can be updated on the fly (even when running)
+                new_gpio_pin = settings_update.gpio_pin if settings_update.gpio_pin is not None else db_settings.gpio_pin
+                new_relay_active_high = settings_update.relay_active_high if settings_update.relay_active_high is not None else db_settings.relay_active_high
+                
+                logger.info(f"GPIO settings changed: pin={new_gpio_pin}, active_high={new_relay_active_high}")
+                success = controller.update_relay_settings(new_gpio_pin, new_relay_active_high)
+                if success:
+                    logger.info("✓ Relay GPIO settings updated successfully")
+                else:
+                    logger.warning("Failed to update relay GPIO settings - may need to restart controller")
             
             # Update controller settings (always update, not just when running)
             # Control mode - always update

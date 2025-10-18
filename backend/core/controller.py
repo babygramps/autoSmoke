@@ -228,6 +228,11 @@ class SmokerController:
                 gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
                 relay_active_high = relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
         
+        # Clean up old relay driver
+        if hasattr(self.relay_driver, 'close'):
+            logger.info("Closing old relay driver")
+            self.relay_driver.close()
+        
         # Recreate the relay driver with new sim_mode
         self.relay_driver = self._create_relay_driver(gpio_pin, relay_active_high)
         
@@ -240,6 +245,43 @@ class SmokerController:
         
         logger.info(f"Hardware reloaded successfully with sim_mode={self.sim_mode}, GPIO pin={gpio_pin}, active_high={relay_active_high}")
         return True
+    
+    def update_relay_settings(self, gpio_pin: int = None, relay_active_high: bool = None):
+        """
+        Update relay GPIO settings without requiring controller restart.
+        Can be called when controller is running or stopped.
+        """
+        from core.hardware import RealRelayDriver
+        
+        # Get current settings if not provided
+        if gpio_pin is None or relay_active_high is None:
+            try:
+                with get_session_sync() as session:
+                    db_settings = session.get(DBSettings, 1)
+                    if db_settings:
+                        gpio_pin = gpio_pin if gpio_pin is not None else db_settings.gpio_pin
+                        relay_active_high = relay_active_high if relay_active_high is not None else db_settings.relay_active_high
+                    else:
+                        gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
+                        relay_active_high = relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
+            except Exception as e:
+                logger.error(f"Failed to load GPIO settings: {e}")
+                return False
+        
+        # If sim mode, just log and return
+        if self.sim_mode:
+            logger.info(f"Sim mode active, GPIO settings updated in DB but not applied: pin={gpio_pin}, active_high={relay_active_high}")
+            return True
+        
+        # Check if it's a RealRelayDriver that supports reinitialize
+        if isinstance(self.relay_driver, RealRelayDriver) and hasattr(self.relay_driver, 'reinitialize'):
+            logger.info(f"Updating relay settings: GPIO pin={gpio_pin}, active_high={relay_active_high}")
+            self.relay_driver.reinitialize(pin=gpio_pin, active_high=relay_active_high)
+            logger.info("✓ Relay settings updated successfully")
+            return True
+        else:
+            logger.warning("Relay driver does not support runtime reconfiguration")
+            return False
     
     def _load_active_smoke(self):
         """Load or create active smoking session."""
@@ -294,6 +336,22 @@ class SmokerController:
         if self.running:
             logger.warning("Controller already running")
             return
+        
+        # Reload GPIO settings from database before starting
+        try:
+            with get_session_sync() as session:
+                db_settings = session.get(DBSettings, 1)
+                if db_settings:
+                    # Check if GPIO settings in database differ from what's currently configured
+                    current_pin = getattr(self.relay_driver, 'pin', None)
+                    current_active_high = getattr(self.relay_driver, 'active_high', None)
+                    
+                    if (current_pin is not None and current_pin != db_settings.gpio_pin) or \
+                       (current_active_high is not None and current_active_high != db_settings.relay_active_high):
+                        logger.info(f"Detected GPIO settings mismatch, reloading: DB has pin={db_settings.gpio_pin}, active_high={db_settings.relay_active_high}")
+                        self.update_relay_settings(db_settings.gpio_pin, db_settings.relay_active_high)
+        except Exception as e:
+            logger.warning(f"Failed to check GPIO settings on start: {e}")
         
         # If there's an active session, load phase settings before starting
         if self.active_smoke_id:
