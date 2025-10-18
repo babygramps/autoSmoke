@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { apiClient } from '../api/client'
 import { Settings as SettingsType, Thermocouple, ThermocoupleCreate } from '../types'
 import { Header } from '../components/Header'
+import { FilteringStats } from '../components/FilteringStats'
 
 // Temperature conversion helpers
 const cToF = (c: number): number => (c * 9/5) + 32
@@ -882,6 +883,9 @@ export function Settings() {
           </p>
         </div>
       </div>
+
+      {/* Filtering Stats Section */}
+      <FilteringStats />
       </div>
     </div>
   )

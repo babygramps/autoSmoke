@@ -258,6 +258,20 @@ class ApiClient {
     return this.request(`/thermocouples/${id}/read_temp`, { method: 'POST' });
   }
 
+  async getFilteringStats(): Promise<{
+    status: string;
+    message?: string;
+    stats: Record<number, {
+      name: string;
+      outliers_rejected: number;
+      faults_detected: number;
+      window_size: number;
+    }>;
+    sim_mode?: boolean;
+  }> {
+    return this.request('/thermocouples/filtering-stats');
+  }
+
   // Recipe endpoints
   async getRecipes(includeUser: boolean = true): Promise<{ recipes: CookingRecipe[] }> {
     return this.request(`/recipes?include_user=${includeUser}`);
