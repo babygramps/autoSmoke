@@ -238,6 +238,12 @@ export function Dashboard() {
   // WebSocket connection
   const { connect } = useWebSocket((data: WebSocketMessage) => {
     if (data.type === 'telemetry') {
+      console.log('🔌 WebSocket telemetry received:', {
+        adaptive_pid_enabled: data.data.adaptive_pid?.enabled,
+        control_mode: data.data.control_mode,
+        running: data.data.running,
+        timestamp: new Date().toISOString()
+      })
       setStatus(data.data)
       setConnected(true)
     } else if (data.type === 'phase_transition_ready') {

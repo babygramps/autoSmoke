@@ -43,6 +43,19 @@ export function Controls({ status, onStatusUpdate }: ControlsProps) {
     lastAutotuneActive.current = status.autotune_active
   }, [status?.autotune_active])
 
+  // Log adaptive PID status changes
+  useEffect(() => {
+    if (!status) return
+    
+    console.log('📊 Status Update - Adaptive PID:', {
+      enabled: status.adaptive_pid?.enabled,
+      adjustment_count: status.adaptive_pid?.adjustment_count,
+      data_points: status.adaptive_pid?.data_points,
+      control_mode: status.control_mode,
+      timestamp: new Date().toISOString()
+    })
+  }, [status?.adaptive_pid?.enabled, status?.control_mode])
+
   const handleStart = async () => {
     try {
       setLoading(true)
@@ -419,18 +432,37 @@ export function Controls({ status, onStatusUpdate }: ControlsProps) {
                 type="checkbox"
                 checked={status.adaptive_pid?.enabled || false}
                 onChange={async (e) => {
+                  console.log('🎛️ Adaptive PID Toggle Clicked:', {
+                    newCheckedState: e.target.checked,
+                    currentStatus: status.adaptive_pid,
+                    controlMode: status.control_mode,
+                    timestamp: new Date().toISOString()
+                  })
+                  
                   try {
                     if (e.target.checked) {
-                      await apiClient.enableAdaptivePID()
+                      console.log('📤 Calling enableAdaptivePID API...')
+                      const response = await apiClient.enableAdaptivePID()
+                      console.log('✅ enableAdaptivePID response:', response)
                       setMessage('Adaptive PID enabled')
                     } else {
-                      await apiClient.disableAdaptivePID()
+                      console.log('📤 Calling disableAdaptivePID API...')
+                      const response = await apiClient.disableAdaptivePID()
+                      console.log('✅ disableAdaptivePID response:', response)
                       setMessage('Adaptive PID disabled')
                     }
+                    
+                    console.log('📤 Fetching updated status...')
                     const newStatus = await apiClient.getStatus()
+                    console.log('✅ New status received:', {
+                      adaptive_pid: newStatus.adaptive_pid,
+                      control_mode: newStatus.control_mode
+                    })
+                    
                     onStatusUpdate(newStatus)
                     setTimeout(() => setMessage(''), 3000)
                   } catch (error) {
+                    console.error('❌ Adaptive PID toggle error:', error)
                     setMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
                   }
                 }}

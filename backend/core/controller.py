@@ -664,10 +664,13 @@ class SmokerController:
     
     def enable_adaptive_pid(self):
         """Enable continuous adaptive PID tuning."""
+        logger.info(f"🎛️ enable_adaptive_pid() called - Current mode: {self.control_mode}, Running: {self.running}")
+        
         if self.control_mode != CONTROL_MODE_TIME_PROPORTIONAL:
-            logger.warning("Cannot enable adaptive PID: not in time-proportional mode")
+            logger.warning(f"❌ Cannot enable adaptive PID: not in time-proportional mode (current: {self.control_mode})")
             return False
         
+        logger.info("✅ Enabling adaptive PID controller...")
         self.adaptive_pid.enable()
         
         # Save to database
@@ -675,17 +678,23 @@ class SmokerController:
             with get_session_sync() as session:
                 db_settings = session.get(DBSettings, 1)
                 if db_settings:
+                    logger.info(f"💾 Saving adaptive_pid_enabled=True to database (was: {db_settings.adaptive_pid_enabled})")
                     db_settings.adaptive_pid_enabled = True
                     session.add(db_settings)
                     session.commit()
+                    logger.info("✅ Database updated successfully")
+                else:
+                    logger.error("❌ No database settings found!")
         except Exception as e:
-            logger.error(f"Failed to save adaptive PID enabled state: {e}")
+            logger.error(f"❌ Failed to save adaptive PID enabled state: {e}")
         
-        logger.info("Adaptive PID tuning enabled by user")
+        logger.info(f"✅ Adaptive PID tuning enabled by user - Status: {self.adaptive_pid.get_status()}")
         return True
     
     def disable_adaptive_pid(self):
         """Disable continuous adaptive PID tuning."""
+        logger.info(f"🎛️ disable_adaptive_pid() called")
+        
         self.adaptive_pid.disable()
         
         # Save to database
@@ -693,13 +702,17 @@ class SmokerController:
             with get_session_sync() as session:
                 db_settings = session.get(DBSettings, 1)
                 if db_settings:
+                    logger.info(f"💾 Saving adaptive_pid_enabled=False to database (was: {db_settings.adaptive_pid_enabled})")
                     db_settings.adaptive_pid_enabled = False
                     session.add(db_settings)
                     session.commit()
+                    logger.info("✅ Database updated successfully")
+                else:
+                    logger.error("❌ No database settings found!")
         except Exception as e:
-            logger.error(f"Failed to save adaptive PID disabled state: {e}")
+            logger.error(f"❌ Failed to save adaptive PID disabled state: {e}")
         
-        logger.info("Adaptive PID tuning disabled by user")
+        logger.info(f"✅ Adaptive PID tuning disabled by user - Status: {self.adaptive_pid.get_status()}")
         return True
     
     def get_adaptive_pid_status(self) -> dict:

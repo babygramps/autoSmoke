@@ -125,6 +125,7 @@ class ConnectionManager:
                         "boost_until": status["boost_until"],
                         "control_mode": status["control_mode"],
                         "active_smoke_id": status["active_smoke_id"],
+                        "control_tc_id": status.get("control_tc_id"),
                         "current_temp_c": status["current_temp_c"],
                         "current_temp_f": status["current_temp_f"],
                         "setpoint_c": status["setpoint_c"],
@@ -134,6 +135,12 @@ class ConnectionManager:
                         "relay_state": status["relay_state"],
                         "loop_count": status["loop_count"],
                         "last_loop_time": status["last_loop_time"],
+                        "pid_state": status.get("pid_state"),
+                        "sim_mode": status.get("sim_mode", False),
+                        "using_fallback_simulation": status.get("using_fallback_simulation", False),
+                        "autotune_active": status.get("autotune_active", False),
+                        "autotune_status": status.get("autotune_status"),
+                        "adaptive_pid": status.get("adaptive_pid", {"enabled": False, "adjustment_count": 0, "data_points": 0}),
                         "thermocouple_readings": status["thermocouple_readings"],
                         "current_phase": status.get("current_phase"),
                         "pending_phase_transition": status.get("pending_phase_transition", False),
@@ -154,6 +161,9 @@ class ConnectionManager:
                         ]
                     }
                 }
+                
+                # Log adaptive PID status being sent
+                logger.debug(f"📡 Broadcasting telemetry - Adaptive PID enabled: {status.get('adaptive_pid', {}).get('enabled', False)}")
                 
                 # Broadcast to all connected clients
                 await self.broadcast(json.dumps(telemetry))

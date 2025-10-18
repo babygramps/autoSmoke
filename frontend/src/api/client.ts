@@ -54,7 +54,13 @@ class ApiClient {
   }
 
   async getStatus(): Promise<ControllerStatus> {
-    return this.request('/control/status');
+    const status = await this.request<ControllerStatus>('/control/status');
+    console.log('🌐 API Response: getStatus - Adaptive PID:', {
+      enabled: status.adaptive_pid?.enabled,
+      adjustment_count: status.adaptive_pid?.adjustment_count,
+      control_mode: status.control_mode
+    });
+    return status;
   }
 
   async setSetpoint(request: SetpointRequest): Promise<{ status: string; message: string; setpoint_f: number; setpoint_c: number }> {
@@ -114,11 +120,17 @@ class ApiClient {
 
   // Adaptive PID endpoints
   async enableAdaptivePID(): Promise<{ status: string; message: string; adaptive_status: any }> {
-    return this.request('/control/adaptive-pid/enable', { method: 'POST' });
+    console.log('🌐 API Call: POST /control/adaptive-pid/enable')
+    const response = await this.request('/control/adaptive-pid/enable', { method: 'POST' });
+    console.log('🌐 API Response: enableAdaptivePID', response)
+    return response;
   }
 
   async disableAdaptivePID(): Promise<{ status: string; message: string; adaptive_status: any }> {
-    return this.request('/control/adaptive-pid/disable', { method: 'POST' });
+    console.log('🌐 API Call: POST /control/adaptive-pid/disable')
+    const response = await this.request('/control/adaptive-pid/disable', { method: 'POST' });
+    console.log('🌐 API Response: disableAdaptivePID', response)
+    return response;
   }
 
   async getAdaptivePIDStatus(): Promise<{ status: string; adaptive_pid: any }> {
