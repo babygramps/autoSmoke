@@ -35,8 +35,8 @@ interface ChartsProps {
 export function Charts({ status, units, smokeId }: ChartsProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
-  const [timeRange, setTimeRange] = useState<number | null>(null) // null = all session data, or hours
-  const [filterMode, setFilterMode] = useState<'session' | 'all'>('session') // session = filter by active session, all = show all data
+  const [timeRange, setTimeRange] = useState<number | null>(2) // Default to 2 hours, null = all session data
+  const [filterMode, setFilterMode] = useState<'session' | 'all'>('all') // session = filter by active session, all = show all data
   const [thermocouples, setThermocouples] = useState<Thermocouple[]>([])
   const chartRef = useRef<ChartJS<'line', number[], string>>(null)
   const isMountedRef = useRef(true)
@@ -79,20 +79,16 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
             params.from_time = startTime.toISOString()
           }
           // If timeRange is null, don't set from_time to get ALL session data
-        } else if (filterMode === 'all') {
-          // Show all data regardless of session
+        } else {
+          // Show all data with time range filter
           if (timeRange !== null) {
             const startTime = new Date(endTime.getTime() - timeRange * 60 * 60 * 1000)
             params.from_time = startTime.toISOString()
           } else {
-            // Default to last 2 hours if no time range selected
+            // Shouldn't happen in 'all' mode, but fallback to 2 hours
             const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000)
             params.from_time = startTime.toISOString()
           }
-        } else {
-          // No session and no filter mode, default to last 2 hours
-          const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000)
-          params.from_time = startTime.toISOString()
         }
         
         const response = await apiClient.getReadings(params)
@@ -114,17 +110,15 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
           data.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
           
           // Debug logging
-          if (data.length > 0) {
-            console.log('Chart data loaded:', {
-              count: data.length,
-              firstTimestamp: data[0].timestamp,
-              lastTimestamp: data[data.length - 1].timestamp,
-              filterMode: filterMode,
-              smokeId: smokeId,
-              timeRange: timeRange,
-              params: params
-            })
-          }
+          console.log('📊 Chart data loaded:', {
+            count: data.length,
+            firstTimestamp: data.length > 0 ? data[0].timestamp : 'N/A',
+            lastTimestamp: data.length > 0 ? data[data.length - 1].timestamp : 'N/A',
+            timeRangeHours: timeRange,
+            filterMode: filterMode,
+            smokeId: smokeId,
+            paramsUsed: params
+          })
           
           setChartData(data)
           setLoading(false)
@@ -159,8 +153,8 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
     // Don't add points while loading or if not mounted
     if (loading || !isMountedRef.current) return
     
-    // Only update if we have valid temperature data and the controller is running
-    if (status && status.current_temp_f !== null && status.current_temp_f !== undefined && status.running) {
+    // Only update if we have valid temperature data (controller can be running or stopped now)
+    if (status && status.current_temp_f !== null && status.current_temp_f !== undefined) {
       const newDataPoint: ChartDataPoint = {
         timestamp: new Date().toISOString(),
         temp_c: status.current_temp_c,
@@ -185,13 +179,13 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         
         const updated = [...prev, newDataPoint]
         
-        // Apply time filtering if specified
+        // Apply time filtering if specified (not null)
         let filtered = updated
-        if (timeRange) {
+        if (timeRange !== null) {
           const cutoff = new Date(Date.now() - timeRange * 60 * 60 * 1000)
           filtered = updated.filter(point => new Date(point.timestamp) > cutoff)
         }
-        // If showing all session data (timeRange === null), keep all points
+        // If timeRange === null, keep all points (entire session)
         
         // Ensure data is sorted chronologically
         filtered.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
@@ -199,7 +193,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         return filtered
       })
     }
-  }, [status, loading])
+  }, [status, loading, timeRange])
 
   // Calculate dynamic temperature scale based on actual data
   const calculateTempRange = () => {
@@ -530,19 +524,19 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
           <div className="flex items-center gap-2">
             <label className="text-sm text-gray-600">View:</label>
             <select
-              value={timeRange === null ? ((filterMode === 'session' && smokeId) ? 'all' : 2) : timeRange}
+              value={timeRange === null ? 'all' : timeRange}
               onChange={(e) => setTimeRange(e.target.value === 'all' ? null : Number(e.target.value))}
               className="text-sm border border-gray-300 rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
-              {filterMode === 'session' && smokeId && <option value="all">Active Session</option>}
-              <option value="0.25">Last 15 minutes</option>
-              <option value="0.5">Last 30 minutes</option>
-              <option value="0.75">Last 45 minutes</option>
-              <option value="1">Last 1 hour</option>
-              <option value="2">Last 2 hours</option>
-              <option value="4">Last 4 hours</option>
-              <option value="8">Last 8 hours</option>
-              <option value="24">Last 24 hours</option>
+              {filterMode === 'session' && smokeId && <option value="all">Entire Session</option>}
+              <option value={0.25}>Last 15 minutes</option>
+              <option value={0.5}>Last 30 minutes</option>
+              <option value={0.75}>Last 45 minutes</option>
+              <option value={1}>Last 1 hour</option>
+              <option value={2}>Last 2 hours</option>
+              <option value={4}>Last 4 hours</option>
+              <option value={8}>Last 8 hours</option>
+              <option value={24}>Last 24 hours</option>
             </select>
           </div>
         </div>
