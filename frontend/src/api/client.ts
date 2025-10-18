@@ -82,6 +82,36 @@ class ApiClient {
     return this.request('/control/boost', { method: 'DELETE' });
   }
 
+  // Auto-tune endpoints
+  async startAutoTune(params: {
+    output_step?: number;
+    lookback_seconds?: number;
+    noise_band?: number;
+    tuning_rule?: string;
+  } = {}): Promise<{ status: string; message: string; tuning_rule: string; parameters: any }> {
+    return this.request('/control/autotune/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        output_step: params.output_step || 50.0,
+        lookback_seconds: params.lookback_seconds || 60.0,
+        noise_band: params.noise_band || 0.5,
+        tuning_rule: params.tuning_rule || 'tyreus_luyben'
+      }),
+    });
+  }
+
+  async cancelAutoTune(): Promise<{ status: string; message: string }> {
+    return this.request('/control/autotune/cancel', { method: 'POST' });
+  }
+
+  async getAutoTuneStatus(): Promise<{ active: boolean; status?: any; message?: string }> {
+    return this.request('/control/autotune/status');
+  }
+
+  async applyAutoTuneGains(): Promise<{ status: string; message: string; gains: { kp: number; ki: number; kd: number } }> {
+    return this.request('/control/autotune/apply', { method: 'POST' });
+  }
+
   // Readings endpoints
   async getReadings(params: {
     smoke_id?: number;

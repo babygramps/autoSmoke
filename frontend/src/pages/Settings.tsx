@@ -387,6 +387,13 @@ export function Settings() {
             {/* Time-Proportional Mode Settings */}
             {formData.control_mode === 'time_proportional' && (
               <>
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>💡 Tip:</strong> Having trouble finding the right PID values? Use the <strong>Auto-Tune</strong> feature in the Dashboard Controls 
+                    to automatically calculate optimal gains for your smoker!
+                  </p>
+                </div>
+                
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
