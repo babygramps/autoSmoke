@@ -404,14 +404,85 @@ class AlertManager:
                     logger.error(f"Alert {alert_id} not found for webhook")
                     return
                 
-                payload = {
-                    "alert_id": alert.id,
-                    "alert_type": alert.alert_type,
-                    "severity": alert.severity,
-                    "message": alert.message,
-                    "timestamp": alert.ts.isoformat(),
-                    "metadata": json.loads(alert.meta_data) if alert.meta_data else {}
-                }
+                # Detect Discord webhook and format accordingly
+                is_discord = "discord.com/api/webhooks" in settings.smoker_webhook_url.lower()
+                
+                if is_discord:
+                    # Discord-specific format with rich embed
+                    # Color based on severity
+                    color_map = {
+                        "critical": 15158332,  # Red
+                        "error": 15105570,     # Orange
+                        "warning": 16776960,   # Yellow
+                        "info": 3447003        # Blue
+                    }
+                    color = color_map.get(alert.severity, 3447003)
+                    
+                    # Emoji based on alert type
+                    emoji_map = {
+                        "high_temp": "🔥",
+                        "low_temp": "🧊",
+                        "stuck_high": "⚠️",
+                        "sensor_fault": "🔌",
+                        "hardware_fallback": "🔄"
+                    }
+                    emoji = emoji_map.get(alert.alert_type, "🚨")
+                    
+                    payload = {
+                        "username": "PiTmaster Alert",
+                        "embeds": [{
+                            "title": f"{emoji} {alert.alert_type.replace('_', ' ').title()}",
+                            "description": alert.message,
+                            "color": color,
+                            "fields": [
+                                {
+                                    "name": "Severity",
+                                    "value": alert.severity.upper(),
+                                    "inline": True
+                                },
+                                {
+                                    "name": "Alert ID",
+                                    "value": str(alert.id),
+                                    "inline": True
+                                }
+                            ],
+                            "timestamp": alert.ts.isoformat(),
+                            "footer": {
+                                "text": "PiTmaster Smoker Controller"
+                            }
+                        }]
+                    }
+                    
+                    # Add metadata fields if present
+                    if alert.meta_data:
+                        try:
+                            metadata = json.loads(alert.meta_data)
+                            if "temp_c" in metadata:
+                                temp_f = (metadata["temp_c"] * 9/5) + 32
+                                payload["embeds"][0]["fields"].append({
+                                    "name": "Temperature",
+                                    "value": f"{temp_f:.1f}°F ({metadata['temp_c']:.1f}°C)",
+                                    "inline": True
+                                })
+                            if "threshold" in metadata:
+                                thresh_f = (metadata["threshold"] * 9/5) + 32
+                                payload["embeds"][0]["fields"].append({
+                                    "name": "Threshold",
+                                    "value": f"{thresh_f:.1f}°F ({metadata['threshold']:.1f}°C)",
+                                    "inline": True
+                                })
+                        except:
+                            pass
+                else:
+                    # Generic format for other webhooks
+                    payload = {
+                        "alert_id": alert.id,
+                        "alert_type": alert.alert_type,
+                        "severity": alert.severity,
+                        "message": alert.message,
+                        "timestamp": alert.ts.isoformat(),
+                        "metadata": json.loads(alert.meta_data) if alert.meta_data else {}
+                    }
             
             response = await self.webhook_client.post(
                 settings.smoker_webhook_url,
@@ -420,7 +491,7 @@ class AlertManager:
             response.raise_for_status()
             
             self.last_webhook_time = now
-            logger.info(f"Webhook sent for alert {alert_id}")
+            logger.info(f"Webhook sent for alert {alert_id} (Discord: {is_discord})")
             
         except Exception as e:
             logger.error(f"Failed to send webhook: {e}")

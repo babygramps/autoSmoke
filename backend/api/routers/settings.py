@@ -294,21 +294,57 @@ async def test_webhook():
                 detail="No webhook URL configured. Please set a webhook URL in settings first."
             )
         
-        # Create test payload
-        test_payload = {
-            "alert_id": 0,
-            "alert_type": "test",
-            "severity": "info",
-            "message": "🧪 Test notification from PiTmaster Smoker Controller",
-            "timestamp": datetime.utcnow().isoformat(),
-            "metadata": {
-                "test": True,
-                "source": "settings_page",
-                "note": "This is a test webhook to verify your configuration is working correctly"
-            }
-        }
+        # Detect Discord webhook and format accordingly
+        is_discord = "discord.com/api/webhooks" in webhook_url.lower()
         
-        logger.info(f"Sending test webhook to: {webhook_url}")
+        if is_discord:
+            # Discord-specific format with rich embed
+            test_payload = {
+                "username": "PiTmaster Smoker",
+                "avatar_url": "https://raw.githubusercontent.com/discord/discord-api-docs/main/images/robot.png",
+                "embeds": [{
+                    "title": "🧪 Test Notification",
+                    "description": "This is a test webhook from your PiTmaster Smoker Controller!",
+                    "color": 3447003,  # Blue color
+                    "fields": [
+                        {
+                            "name": "Status",
+                            "value": "✅ Webhook configuration is working correctly",
+                            "inline": False
+                        },
+                        {
+                            "name": "Test Type",
+                            "value": "Manual test from Settings page",
+                            "inline": True
+                        },
+                        {
+                            "name": "Alert Type",
+                            "value": "test",
+                            "inline": True
+                        }
+                    ],
+                    "footer": {
+                        "text": "Real alerts will include temperature data and severity levels"
+                    },
+                    "timestamp": datetime.utcnow().isoformat()
+                }]
+            }
+        else:
+            # Generic format for other webhooks (IFTTT, Home Assistant, etc.)
+            test_payload = {
+                "alert_id": 0,
+                "alert_type": "test",
+                "severity": "info",
+                "message": "🧪 Test notification from PiTmaster Smoker Controller",
+                "timestamp": datetime.utcnow().isoformat(),
+                "metadata": {
+                    "test": True,
+                    "source": "settings_page",
+                    "note": "This is a test webhook to verify your configuration is working correctly"
+                }
+            }
+        
+        logger.info(f"Sending test webhook to: {webhook_url} (Discord: {is_discord})")
         
         # Send webhook with timeout
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -322,8 +358,9 @@ async def test_webhook():
         
         return {
             "status": "success",
-            "message": f"Test webhook sent successfully! Check your endpoint for the test notification.",
+            "message": f"Test webhook sent successfully! Check your {'Discord server' if is_discord else 'endpoint'} for the test notification.",
             "webhook_url": webhook_url,
+            "webhook_type": "Discord" if is_discord else "Generic",
             "status_code": response.status_code,
             "payload_sent": test_payload
         }
