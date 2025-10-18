@@ -58,6 +58,45 @@ export interface AlertSummary {
   unacknowledged: number;
 }
 
+export interface AdaptivePIDStatus {
+  enabled: boolean;
+  adjustment_count: number;
+  last_adjustment: number | null;
+  cooldown_remaining: number;
+  data_points: number;
+  recent_adjustments: Array<{
+    timestamp: number;
+    old_kp: number;
+    old_ki: number;
+    old_kd: number;
+    new_kp: number;
+    new_ki: number;
+    new_kd: number;
+    reason: string;
+    metrics: {
+      avg_error: number;
+      oscillation: number;
+      overshoot: boolean;
+    };
+  }>;
+}
+
+export interface AutoTuneStatus {
+  state: string;
+  progress: number;
+  message: string;
+  elapsed_time: number;
+  estimated_time_remaining: number;
+  peaks_detected: number;
+  results?: {
+    kp: number;
+    ki: number;
+    kd: number;
+    ultimate_gain: number;
+    ultimate_period: number;
+  };
+}
+
 export interface ControllerStatus {
   running: boolean;
   boost_active: boolean;
@@ -75,6 +114,20 @@ export interface ControllerStatus {
   relay_state: boolean;
   loop_count: number;
   last_loop_time: number | null;
+  pid_state: {
+    kp: number;
+    ki: number;
+    kd: number;
+    p_term: number;
+    i_term: number;
+    d_term: number;
+    last_error: number;
+  };
+  sim_mode: boolean;
+  using_fallback_simulation: boolean;
+  autotune_active: boolean;
+  autotune_status: AutoTuneStatus | null;
+  adaptive_pid: AdaptivePIDStatus;
   current_phase: {
     id: number;
     phase_name: string;
@@ -109,6 +162,7 @@ export interface Settings {
   gpio_pin: number;
   relay_active_high: boolean;
   boost_duration_s: number;
+  adaptive_pid_enabled: boolean;
   webhook_url: string | null;
   created_at: string;
   updated_at: string;
@@ -222,6 +276,7 @@ export interface SettingsUpdate {
   gpio_pin?: number;
   relay_active_high?: boolean;
   boost_duration_s?: number;
+  adaptive_pid_enabled?: boolean;
   webhook_url?: string | null;
 }
 
