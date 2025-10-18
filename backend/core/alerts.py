@@ -258,9 +258,10 @@ class AlertManager:
                 session.add(event)
                 session.commit()
                 
-                logger.warning(f"Alert created: {message}")
+                logger.warning(f"🚨 Alert created: {message} (ID: {alert_id}, Type: {alert_type}, Severity: {severity})")
                 
                 # Send webhook if configured (pass ID instead of object)
+                logger.info(f"Attempting to send webhook for alert {alert_id}...")
                 await self._send_webhook_by_id(alert_id)
                 
         except Exception as e:
@@ -386,15 +387,30 @@ class AlertManager:
     
     async def _send_webhook_by_id(self, alert_id: int):
         """Send webhook notification for alert by ID."""
-        if not settings.smoker_webhook_url:
+        # Get webhook URL from database settings (not config file)
+        webhook_url = None
+        try:
+            from db.models import Settings as DBSettings
+            with get_session_sync() as session:
+                db_settings = session.get(DBSettings, 1)
+                webhook_url = db_settings.webhook_url if db_settings else settings.smoker_webhook_url
+        except Exception as e:
+            logger.error(f"Failed to load webhook URL from database: {e}")
+            webhook_url = settings.smoker_webhook_url
+        
+        if not webhook_url:
+            logger.debug(f"No webhook URL configured, skipping webhook for alert {alert_id}")
             return
         
         # Check rate limiting
         now = datetime.utcnow()
         if (self.last_webhook_time and 
             now - self.last_webhook_time < self.webhook_rate_limit):
-            logger.debug("Webhook rate limited")
+            time_remaining = (self.webhook_rate_limit - (now - self.last_webhook_time)).total_seconds()
+            logger.warning(f"⏱️ Webhook rate limited for alert {alert_id}. Wait {time_remaining:.0f}s before next webhook.")
             return
+        
+        logger.info(f"📤 Sending webhook for alert {alert_id} to {webhook_url[:50]}...")
         
         try:
             # Fetch alert from database
@@ -405,7 +421,7 @@ class AlertManager:
                     return
                 
                 # Detect Discord webhook and format accordingly
-                is_discord = "discord.com/api/webhooks" in settings.smoker_webhook_url.lower()
+                is_discord = "discord.com/api/webhooks" in webhook_url.lower()
                 
                 if is_discord:
                     # Discord-specific format with rich embed
@@ -485,13 +501,13 @@ class AlertManager:
                     }
             
             response = await self.webhook_client.post(
-                settings.smoker_webhook_url,
+                webhook_url,
                 json=payload
             )
             response.raise_for_status()
             
             self.last_webhook_time = now
-            logger.info(f"Webhook sent for alert {alert_id} (Discord: {is_discord})")
+            logger.info(f"✅ Webhook sent successfully for alert {alert_id} to {webhook_url[:50]}... (Discord: {is_discord}, Status: {response.status_code})")
             
         except Exception as e:
             logger.error(f"Failed to send webhook: {e}")
