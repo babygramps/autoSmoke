@@ -169,6 +169,9 @@ class Settings(SQLModel, table=True):
     # Boost mode
     boost_duration_s: int = Field(default=60, description="Boost mode duration in seconds")
     
+    # Adaptive PID
+    adaptive_pid_enabled: bool = Field(default=True, description="Adaptive PID tuning enabled")
+    
     # Webhook
     webhook_url: Optional[str] = Field(default=None, description="Webhook URL for alerts")
     

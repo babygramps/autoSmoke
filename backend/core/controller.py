@@ -110,8 +110,11 @@ class SmokerController:
         
         # Adaptive PID
         self.adaptive_pid = AdaptivePIDController()
-        # Enable adaptive tuning by default if in PID mode
-        if self.control_mode == CONTROL_MODE_TIME_PROPORTIONAL:
+        # Load adaptive PID state from database
+        if db_settings and db_settings.adaptive_pid_enabled and self.control_mode == CONTROL_MODE_TIME_PROPORTIONAL:
+            self.adaptive_pid.enable()
+        elif not db_settings and self.control_mode == CONTROL_MODE_TIME_PROPORTIONAL:
+            # Default to enabled if no DB settings
             self.adaptive_pid.enable()
         
         logger.info("SmokerController initialized")
@@ -465,10 +468,22 @@ class SmokerController:
             self.window_start_time = None
             self.window_on_duration = 0.0
             
-            # Enable/disable adaptive PID based on mode
+            # Enable/disable adaptive PID based on mode and database setting
             if mode == CONTROL_MODE_TIME_PROPORTIONAL:
-                self.adaptive_pid.enable()
-                logger.info("Adaptive PID enabled (switched to PID mode)")
+                # Check if user wants adaptive PID enabled
+                try:
+                    with get_session_sync() as session:
+                        db_settings = session.get(DBSettings, 1)
+                        if db_settings and db_settings.adaptive_pid_enabled:
+                            self.adaptive_pid.enable()
+                            logger.info("Adaptive PID enabled (switched to PID mode)")
+                        else:
+                            # Default to enabled if no preference
+                            self.adaptive_pid.enable()
+                            logger.info("Adaptive PID enabled by default (switched to PID mode)")
+                except Exception as e:
+                    logger.error(f"Failed to load adaptive PID setting: {e}")
+                    self.adaptive_pid.enable()  # Default to enabled on error
             else:
                 self.adaptive_pid.disable()
                 logger.info("Adaptive PID disabled (switched to thermostat mode)")
@@ -654,12 +669,36 @@ class SmokerController:
             return False
         
         self.adaptive_pid.enable()
+        
+        # Save to database
+        try:
+            with get_session_sync() as session:
+                db_settings = session.get(DBSettings, 1)
+                if db_settings:
+                    db_settings.adaptive_pid_enabled = True
+                    session.add(db_settings)
+                    session.commit()
+        except Exception as e:
+            logger.error(f"Failed to save adaptive PID enabled state: {e}")
+        
         logger.info("Adaptive PID tuning enabled by user")
         return True
     
     def disable_adaptive_pid(self):
         """Disable continuous adaptive PID tuning."""
         self.adaptive_pid.disable()
+        
+        # Save to database
+        try:
+            with get_session_sync() as session:
+                db_settings = session.get(DBSettings, 1)
+                if db_settings:
+                    db_settings.adaptive_pid_enabled = False
+                    session.add(db_settings)
+                    session.commit()
+        except Exception as e:
+            logger.error(f"Failed to save adaptive PID disabled state: {e}")
+        
         logger.info("Adaptive PID tuning disabled by user")
         return True
     
