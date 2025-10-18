@@ -25,6 +25,10 @@ export function Settings() {
   const [editingName, setEditingName] = useState<number | null>(null)
   const [tempName, setTempName] = useState('')
   const [tcMessage, setTcMessage] = useState('')
+  
+  // Webhook test state
+  const [testingWebhook, setTestingWebhook] = useState(false)
+  const [webhookTestMessage, setWebhookTestMessage] = useState('')
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -82,6 +86,23 @@ export function Settings() {
       setMessage(`Error resetting settings: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleTestWebhook = async () => {
+    try {
+      setTestingWebhook(true)
+      setWebhookTestMessage('')
+      
+      const response = await apiClient.testWebhook()
+      setWebhookTestMessage(`✅ ${response.message}`)
+      setTimeout(() => setWebhookTestMessage(''), 5000)
+    } catch (error: any) {
+      const errorMsg = error?.message || error?.detail || 'Unknown error'
+      setWebhookTestMessage(`❌ ${errorMsg}`)
+      setTimeout(() => setWebhookTestMessage(''), 8000)
+    } finally {
+      setTestingWebhook(false)
     }
   }
 
@@ -888,6 +909,76 @@ export function Settings() {
             Each thermocouple must be connected to a unique CS (Chip Select) GPIO pin. 
             The control thermocouple is used for PID temperature control.
           </p>
+        </div>
+      </div>
+
+      {/* Webhook Configuration Section */}
+      <div className="card p-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-4">🔔 Webhook Notifications</h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Configure a webhook URL to receive HTTP POST notifications when critical alerts occur (high/low temperature, sensor faults, etc.)
+        </p>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Webhook URL
+            </label>
+            <input
+              type="url"
+              value={formData.webhook_url || ''}
+              onChange={(e) => handleInputChange('webhook_url', e.target.value || null)}
+              className="input w-full"
+              placeholder="https://your-webhook-endpoint.com/alert"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Examples: Discord webhook, IFTTT, Home Assistant, webhook.site
+            </p>
+          </div>
+          
+          {/* Test Webhook Button */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleTestWebhook}
+              disabled={testingWebhook || !formData.webhook_url}
+              className="btn btn-secondary flex items-center gap-2"
+            >
+              {testingWebhook ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Testing...
+                </>
+              ) : (
+                <>
+                  🧪 Test Webhook
+                </>
+              )}
+            </button>
+            
+            {webhookTestMessage && (
+              <div className={`text-sm font-medium ${webhookTestMessage.startsWith('✅') ? 'text-green-600' : 'text-red-600'}`}>
+                {webhookTestMessage}
+              </div>
+            )}
+          </div>
+          
+          {!formData.webhook_url && (
+            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm text-yellow-800">
+                💡 Enter a webhook URL above and save settings, then click "Test Webhook" to verify it's working
+              </p>
+            </div>
+          )}
+          
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-xs text-blue-800">
+              <strong>ℹ️ Test Payload:</strong> The test sends a sample notification with alert_type="test" and severity="info". 
+              Real alerts will have types like "high_temp", "low_temp", "sensor_fault", etc.
+            </p>
+          </div>
         </div>
       </div>
 

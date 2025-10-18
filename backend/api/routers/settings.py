@@ -274,3 +274,74 @@ async def reset_settings():
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reset settings: {str(e)}")
+
+
+@router.post("/test-webhook")
+async def test_webhook():
+    """Test webhook configuration by sending a test notification."""
+    try:
+        import httpx
+        from datetime import datetime
+        
+        # Get current webhook URL from settings
+        with get_session_sync() as session:
+            db_settings = session.get(Settings, 1)
+            webhook_url = db_settings.webhook_url if db_settings else None
+        
+        if not webhook_url:
+            raise HTTPException(
+                status_code=400,
+                detail="No webhook URL configured. Please set a webhook URL in settings first."
+            )
+        
+        # Create test payload
+        test_payload = {
+            "alert_id": 0,
+            "alert_type": "test",
+            "severity": "info",
+            "message": "🧪 Test notification from PiTmaster Smoker Controller",
+            "timestamp": datetime.utcnow().isoformat(),
+            "metadata": {
+                "test": True,
+                "source": "settings_page",
+                "note": "This is a test webhook to verify your configuration is working correctly"
+            }
+        }
+        
+        logger.info(f"Sending test webhook to: {webhook_url}")
+        
+        # Send webhook with timeout
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                webhook_url,
+                json=test_payload
+            )
+            response.raise_for_status()
+        
+        logger.info(f"Test webhook sent successfully. Status: {response.status_code}")
+        
+        return {
+            "status": "success",
+            "message": f"Test webhook sent successfully! Check your endpoint for the test notification.",
+            "webhook_url": webhook_url,
+            "status_code": response.status_code,
+            "payload_sent": test_payload
+        }
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Webhook HTTP error: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Webhook endpoint returned error {e.response.status_code}: {e.response.text[:200]}"
+        )
+    except httpx.RequestError as e:
+        logger.error(f"Webhook request error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to connect to webhook endpoint: {str(e)}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to test webhook: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to test webhook: {str(e)}")

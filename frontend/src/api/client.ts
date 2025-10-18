@@ -137,6 +137,56 @@ class ApiClient {
     return this.request('/control/adaptive-pid/status');
   }
 
+  // Settings endpoints
+  async getSettings(): Promise<Settings> {
+    return this.request('/settings');
+  }
+
+  async updateSettings(settings: SettingsUpdate): Promise<{ status: string; message: string; settings: Settings }> {
+    return this.request('/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
+  }
+
+  async resetSettings(): Promise<{ status: string; message: string; settings: Settings }> {
+    return this.request('/settings/reset', { method: 'POST' });
+  }
+
+  async testWebhook(): Promise<{ status: string; message: string; webhook_url: string; status_code: number; payload_sent: any }> {
+    return this.request('/settings/test-webhook', { method: 'POST' });
+  }
+
+  // Thermocouple endpoints
+  async getThermocouples(): Promise<{ thermocouples: Thermocouple[] }> {
+    return this.request('/thermocouples');
+  }
+
+  async createThermocouple(data: ThermocoupleCreate): Promise<{ status: string; message: string; thermocouple: Thermocouple }> {
+    return this.request('/thermocouples', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateThermocouple(id: number, data: ThermocoupleUpdate): Promise<{ status: string; message: string; thermocouple: Thermocouple }> {
+    return this.request(`/thermocouples/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteThermocouple(id: number): Promise<{ status: string; message: string }> {
+    return this.request(`/thermocouples/${id}`, { method: 'DELETE' });
+  }
+
+  async reorderThermocouples(order: number[]): Promise<{ status: string; message: string }> {
+    return this.request('/thermocouples/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ order }),
+    });
+  }
+
   // Readings endpoints
   async getReadings(params: {
     smoke_id?: number;
