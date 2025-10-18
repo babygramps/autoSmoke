@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { apiClient } from '../api/client'
 import { Reading, ReadingStats, Smoke, Thermocouple } from '../types'
 import { format, subDays } from 'date-fns'
+import { Header } from '../components/Header'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -484,9 +485,15 @@ export function History() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Controls */}
-      <div className="card">
+    <div className="relative">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-40 bg-white">
+        <Header />
+      </div>
+
+      <div className="p-6 space-y-6">
+        {/* Controls */}
+        <div className="card">
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Historical Data</h2>
         
         {/* Smoke Session Filter */}
@@ -830,6 +837,7 @@ export function History() {
             )}
           </>
         )}
+      </div>
       </div>
     </div>
   )

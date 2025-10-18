@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiClient } from '../api/client'
 import { Settings as SettingsType, Thermocouple, ThermocoupleCreate } from '../types'
+import { Header } from '../components/Header'
 
 // Temperature conversion helpers
 const cToF = (c: number): number => (c * 9/5) + 32
@@ -198,8 +199,14 @@ export function Settings() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="card">
+    <div className="relative">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-40 bg-white">
+        <Header />
+      </div>
+
+      <div className="p-6 space-y-6">
+        <div className="card">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-gray-900">Settings</h2>
           <div className="space-x-2">
@@ -874,6 +881,7 @@ export function Settings() {
             The control thermocouple is used for PID temperature control.
           </p>
         </div>
+      </div>
       </div>
     </div>
   )

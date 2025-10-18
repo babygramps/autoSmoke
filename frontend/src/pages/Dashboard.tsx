@@ -15,7 +15,6 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Link, useLocation } from 'react-router-dom'
 import { Header } from '../components/Header'
 import { Charts } from '../components/Charts'
 import { Controls } from '../components/Controls'
@@ -218,12 +217,6 @@ export function Dashboard() {
     return saved ? JSON.parse(saved) : false
   })
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const location = useLocation()
-  const navItems = [
-    { path: '/', label: 'Dashboard', icon: '📊' },
-    { path: '/settings', label: 'Settings', icon: '⚙️' },
-    { path: '/history', label: 'History', icon: '📈' },
-  ]
 
   // Phase management state
   const [showPhaseTransitionModal, setShowPhaseTransitionModal] = useState(false)
@@ -279,7 +272,7 @@ export function Dashboard() {
           
           if (active) {
             const phasesData = await apiClient.getSmokePhases(active.id)
-            setAllPhases(phasesData || [])
+            setAllPhases(phasesData?.phases || [])
           }
         }
       } catch (error) {
@@ -313,7 +306,7 @@ export function Dashboard() {
         // Load phases for active smoke
         if (active) {
           const phasesData = await apiClient.getSmokePhases(active.id)
-          setAllPhases(phasesData || [])
+          setAllPhases(phasesData?.phases || [])
         }
       } else {
         setActiveSmoke(null)
@@ -423,7 +416,7 @@ export function Dashboard() {
       component: status?.active_smoke_id && activeSmoke ? (
         <SessionTimeDisplay
           smoke={activeSmoke}
-          currentPhase={status.current_phase}
+          currentPhase={status.current_phase as any}
           allPhases={allPhases}
         />
       ) : (
@@ -591,33 +584,7 @@ export function Dashboard() {
   const visibleCount = Object.values(tileVisibility).filter(Boolean).length
 
   return (
-    <div className="flex">
-      {/* Left Nav Sidebar (scrolls with page) */}
-      <nav className="w-64 bg-white shadow-sm sticky top-0 h-screen overflow-y-auto">
-        <div className="p-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-6">Smoker Controller</h2>
-          <ul className="space-y-2">
-            {navItems.map((item) => (
-              <li key={item.path}>
-                <Link
-                  to={item.path}
-                  className={`flex items-center px-4 py-2 rounded-lg transition-colors ${
-                    location.pathname === item.path
-                      ? 'bg-primary-100 text-primary-700 font-medium'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <span className="mr-3">{item.icon}</span>
-                  {item.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </nav>
-
-      {/* Main content */}
-      <div className="flex-1">
+    <div className="relative">
         {/* Unified sticky header (app header + dashboard toolbar) */}
         <div className="sticky top-0 z-40 bg-white">
           <Header
@@ -853,7 +820,6 @@ export function Dashboard() {
           }}
         />
       )}
-      </div>
     </div>
   )
 }
