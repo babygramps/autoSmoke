@@ -30,6 +30,10 @@ class ConnectionManager:
             self.running = True
             self.broadcast_task = asyncio.create_task(self._broadcast_loop())
             logger.info("WebSocket broadcasting started")
+            
+            # Start always-on temperature monitoring
+            controller.start_monitoring()
+            logger.info("Controller monitoring started (temperatures will always be read)")
     
     async def stop_broadcasting(self):
         """Stop the broadcast task."""

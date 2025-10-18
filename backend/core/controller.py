@@ -97,6 +97,7 @@ class SmokerController:
         
         # Control loop task
         self._control_task = None
+        self._monitoring_task = None  # Always-on temperature monitoring
         self._loop_interval = 1.0  # 1 Hz
         
         # Statistics
@@ -347,11 +348,21 @@ class SmokerController:
         except Exception as e:
             logger.error(f"Failed to load phase settings for smoke {smoke_id}: {e}")
     
+    def start_monitoring(self):
+        """Start the always-on temperature monitoring loop."""
+        if self._monitoring_task is None:
+            self._monitoring_task = asyncio.create_task(self._monitoring_loop())
+            logger.info("Temperature monitoring started (always-on)")
+    
     async def start(self):
-        """Start the control loop."""
+        """Start the control loop (active control with relay)."""
         if self.running:
             logger.warning("Controller already running")
             return
+        
+        # Ensure monitoring is running
+        if self._monitoring_task is None:
+            self.start_monitoring()
         
         # Reload GPIO settings from database before starting
         try:
@@ -386,10 +397,10 @@ class SmokerController:
         
         # Log startup event
         await self._log_event("controller_start", "Controller started")
-        logger.info("Smoker controller started")
+        logger.info("Smoker controller started (active control enabled)")
     
     async def stop(self):
-        """Stop the control loop."""
+        """Stop the control loop (turns off relay, but monitoring continues)."""
         if not self.running:
             logger.warning("Controller not running")
             return
@@ -411,7 +422,7 @@ class SmokerController:
         
         # Log shutdown event
         await self._log_event("controller_stop", "Controller stopped")
-        logger.info("Smoker controller stopped")
+        logger.info("Smoker controller stopped (active control disabled, monitoring continues)")
     
     async def set_setpoint(self, setpoint_f: float):
         """Update setpoint temperature."""
@@ -719,6 +730,35 @@ class SmokerController:
         """Get adaptive PID status."""
         return self.adaptive_pid.get_status()
     
+    async def _monitoring_loop(self):
+        """Always-on temperature monitoring loop (runs even when controller is stopped)."""
+        logger.info("Temperature monitoring loop started")
+        while True:  # Runs forever
+            try:
+                # Read temperatures from all thermocouples
+                self.tc_readings = await self.tc_manager.read_all()
+                
+                # Get control thermocouple temperature
+                control_temp_c = None
+                control_fault = True
+                
+                if self.control_tc_id and self.control_tc_id in self.tc_readings:
+                    control_temp_c, control_fault = self.tc_readings[self.control_tc_id]
+                
+                # Update temperature values for status display
+                if control_temp_c is not None and not control_fault:
+                    self.current_temp_c = control_temp_c
+                    self.current_temp_f = settings.celsius_to_fahrenheit(control_temp_c)
+                else:
+                    # Keep last known values but could mark as stale
+                    pass
+                
+            except Exception as e:
+                logger.error(f"Error in monitoring loop: {e}")
+            
+            # Sleep for 1 second
+            await asyncio.sleep(1.0)
+    
     async def _control_loop(self):
         """Main control loop running at 1 Hz."""
         while self.running:
@@ -743,8 +783,8 @@ class SmokerController:
     
     async def _control_iteration(self):
         """Single control loop iteration."""
-        # Read temperatures from all thermocouples
-        self.tc_readings = await self.tc_manager.read_all()
+        # Note: Temperature readings are handled by monitoring loop
+        # Just use the latest readings
         
         # Get control thermocouple temperature
         control_temp_c = None
@@ -768,9 +808,6 @@ class SmokerController:
             logger.error(f"Control thermocouple reading failed (ID={self.control_tc_id})")
             return
         
-        # Update temperature values (for backward compatibility and status)
-        self.current_temp_c = control_temp_c
-        self.current_temp_f = settings.celsius_to_fahrenheit(control_temp_c)
         temp_c = control_temp_c
         
         # Check if boost mode should end
