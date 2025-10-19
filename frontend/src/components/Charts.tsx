@@ -90,17 +90,33 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         setLoading(true)
         
         const endTime = new Date()
+        
+        // Calculate appropriate limit based on time range
+        // Assume readings every 5 seconds on average
+        // For time range in hours, calculate: hours * 3600 seconds / 5 seconds = points
+        let calculatedLimit = INITIAL_FETCH_LIMIT
+        if (timeRange !== null) {
+          // Calculate expected readings: timeRange (hours) * 720 readings/hour (one every 5 sec)
+          calculatedLimit = Math.ceil(timeRange * 720)
+          // Cap at backend max (5000) and apply downsampling threshold
+          calculatedLimit = Math.min(calculatedLimit, 5000)
+        } else {
+          // For "entire session", use max limit
+          calculatedLimit = 5000
+        }
+        
         let params: any = {
           to_time: endTime.toISOString(),
-          limit: INITIAL_FETCH_LIMIT, // Reduced limit for better performance
+          limit: calculatedLimit,
           include_thermocouples: true, // Include thermocouple readings
         }
         
         console.log('📊 Chart: Starting data fetch with params:', {
-          limit: INITIAL_FETCH_LIMIT,
+          limit: calculatedLimit,
           timeRange,
           filterMode,
-          smokeId
+          smokeId,
+          calculationNote: timeRange !== null ? `${timeRange} hours * 720 readings/hour = ${timeRange * 720} points` : 'all session data'
         })
         
         // Apply session filter if in session mode and a session is active
