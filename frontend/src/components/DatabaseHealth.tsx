@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { apiClient } from '../api/client'
 
 interface DatabaseHealth {
   health_status: 'good' | 'warning' | 'critical'

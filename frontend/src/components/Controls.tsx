@@ -31,8 +31,8 @@ export function Controls({ status, onStatusUpdate }: ControlsProps) {
     // Detect transition from active to inactive
     if (lastAutotuneActive.current === true && !status.autotune_active) {
       // Auto-tune just completed - check if it succeeded
-      if (status.autotune_status?.status?.results) {
-        const results = status.autotune_status.status.results
+      if (status.autotune_status?.results) {
+        const results = status.autotune_status.results
         setAutoTuneMessage(`✅ Auto-tune complete! Optimized gains applied: Kp=${results.kp?.toFixed(3)}, Ki=${results.ki?.toFixed(3)}, Kd=${results.kd?.toFixed(3)}`)
         // Clear message after 10 seconds
         setTimeout(() => setAutoTuneMessage(''), 10000)
@@ -347,18 +347,18 @@ export function Controls({ status, onStatusUpdate }: ControlsProps) {
                   <span className="font-semibold text-primary-900">Auto-Tuning in Progress</span>
                 </div>
                 <span className="text-sm text-primary-700 font-medium">
-                  {status.autotune_status.status?.elapsed_time 
-                    ? `${Math.floor(status.autotune_status.status.elapsed_time / 60)}:${Math.floor(status.autotune_status.status.elapsed_time % 60).toString().padStart(2, '0')}`
+                  {status.autotune_status.elapsed_time 
+                    ? `${Math.floor(status.autotune_status.elapsed_time / 60)}:${Math.floor(status.autotune_status.elapsed_time % 60).toString().padStart(2, '0')}`
                     : '0:00'}
                 </span>
               </div>
 
               <div className="flex items-center justify-between text-sm mb-4">
                 <span className="text-primary-700">
-                  Progress: {status.autotune_status.status?.cycle_count || 0} / {status.autotune_status.status?.min_cycles || 3} cycles
+                  Peaks detected: {status.autotune_status.peaks_detected || 0}
                 </span>
                 <span className="text-primary-700">
-                  {status.autotune_status.status?.state?.replace('_', ' ') || 'unknown'}
+                  {status.autotune_status.state?.replace('_', ' ') || 'unknown'}
                 </span>
               </div>
 

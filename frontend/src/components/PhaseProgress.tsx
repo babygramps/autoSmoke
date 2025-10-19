@@ -11,6 +11,7 @@ interface PhaseProgressProps {
     target_temp_f: number
     started_at: string | null
     is_active: boolean
+    is_paused: boolean
     completion_conditions: any
   } | null
   onEditPhase?: () => void

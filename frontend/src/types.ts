@@ -135,6 +135,7 @@ export interface ControllerStatus {
     target_temp_f: number;
     started_at: string | null;
     is_active: boolean;
+    is_paused: boolean;
     completion_conditions: PhaseConditions;
   } | null;
   pending_phase_transition: boolean;
