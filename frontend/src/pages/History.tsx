@@ -28,6 +28,11 @@ ChartJS.register(
   TimeScale
 )
 
+// Performance configuration
+const MAX_HISTORY_POINTS = 5000 // Higher limit for history view (not live)
+const DOWNSAMPLE_THRESHOLD = 2000 // Start downsampling above this many points
+const INITIAL_FETCH_LIMIT = 2000 // Reasonable initial fetch
+
 export function History() {
   const [readings, setReadings] = useState<Reading[]>([])
   const [stats, setStats] = useState<ReadingStats | null>(null)
@@ -63,6 +68,27 @@ export function History() {
   const [totalPages, setTotalPages] = useState(1)
   const itemsPerPage = 100
 
+  // Downsampling function to reduce data points while preserving shape
+  const downsampleData = (data: Reading[], targetSize: number): Reading[] => {
+    if (data.length <= targetSize) return data
+    
+    const ratio = data.length / targetSize
+    const downsampled: Reading[] = []
+    
+    for (let i = 0; i < targetSize; i++) {
+      const index = Math.floor(i * ratio)
+      downsampled.push(data[index])
+    }
+    
+    // Always include the last point for accuracy
+    if (downsampled[downsampled.length - 1] !== data[data.length - 1]) {
+      downsampled.push(data[data.length - 1])
+    }
+    
+    console.log(`📉 History: Downsampled data from ${data.length} to ${downsampled.length} points (ratio: ${ratio.toFixed(2)})`)
+    return downsampled
+  }
+
   const fetchData = async () => {
     try {
       setLoading(true)
@@ -71,11 +97,12 @@ export function History() {
       const fromDateTime = new Date(`${fromDate}T${fromTime}:00`)
       const toDateTime = new Date(`${toDate}T${toTime}:00`)
       
-      console.log('Fetching history data:', {
+      console.log('📊 History: Fetching data with params:', {
         fromDateTime: fromDateTime.toISOString(),
         toDateTime: toDateTime.toISOString(),
         selectedSmoke,
-        currentPage
+        currentPage,
+        limit: Math.min(itemsPerPage * currentPage, INITIAL_FETCH_LIMIT)
       })
       
       const [readingsResponse, statsResponse] = await Promise.all([
@@ -83,7 +110,7 @@ export function History() {
           smoke_id: selectedSmoke || undefined,
           from_time: fromDateTime.toISOString(),
           to_time: toDateTime.toISOString(),
-          limit: itemsPerPage * currentPage,
+          limit: Math.min(itemsPerPage * currentPage, INITIAL_FETCH_LIMIT), // Cap the limit
           include_thermocouples: true, // Include thermocouple data for the chart
         }),
         apiClient.getReadingStats({ 
@@ -92,14 +119,27 @@ export function History() {
         })
       ])
       
-      console.log('History data fetched:', {
-        readingsCount: readingsResponse.count,
-        readingsLength: readingsResponse.readings.length,
-        hasThermocoupleData: readingsResponse.readings.some(r => r.thermocouple_readings),
+      // Apply downsampling if needed
+      let processedReadings = readingsResponse.readings
+      if (readingsResponse.readings.length > MAX_HISTORY_POINTS) {
+        console.warn(`⚠️ History data exceeds maximum (${readingsResponse.readings.length} > ${MAX_HISTORY_POINTS}), applying hard limit`)
+        processedReadings = downsampleData(readingsResponse.readings, MAX_HISTORY_POINTS)
+      } else if (readingsResponse.readings.length > DOWNSAMPLE_THRESHOLD) {
+        console.log(`📉 History data exceeds threshold (${readingsResponse.readings.length} > ${DOWNSAMPLE_THRESHOLD}), downsampling`)
+        processedReadings = downsampleData(readingsResponse.readings, DOWNSAMPLE_THRESHOLD)
+      }
+      
+      const estimatedSizeKB = Math.round(JSON.stringify(processedReadings).length / 1024)
+      console.log('📊 History data processed:', {
+        originalCount: readingsResponse.readings.length,
+        processedCount: processedReadings.length,
+        downsampled: readingsResponse.readings.length !== processedReadings.length,
+        estimatedSizeKB,
+        hasThermocoupleData: processedReadings.some(r => r.thermocouple_readings),
         statsAvailable: !!statsResponse.stats
       })
       
-      setReadings(readingsResponse.readings)
+      setReadings(processedReadings)
       setStats(statsResponse)
       setTotalPages(Math.ceil(readingsResponse.count / itemsPerPage))
       
@@ -435,6 +475,11 @@ export function History() {
       },
     },
     plugins: {
+      decimation: {
+        enabled: true,
+        algorithm: 'lttb' as const, // Largest-Triangle-Three-Buckets algorithm for smart downsampling
+        samples: 1000, // Higher sample count for history view
+      },
       legend: {
         position: 'top' as const,
         labels: {
@@ -707,9 +752,16 @@ export function History() {
       {!loading && readings.length > 0 && (
         <div className="card">
           <div className="mb-4 flex items-center justify-between flex-wrap gap-4">
-            <h3 className="text-lg font-semibold text-gray-900">
-              Temperature History
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Temperature History
+              </h3>
+              {readings.length >= DOWNSAMPLE_THRESHOLD && (
+                <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full font-medium" title="Chart data has been downsampled for better performance">
+                  ⚡ Optimized ({readings.length} pts)
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <label className="text-sm text-gray-600">Units:</label>
               <select

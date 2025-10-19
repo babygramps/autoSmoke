@@ -32,6 +32,12 @@ interface ChartsProps {
   smokeId?: number
 }
 
+// Performance configuration
+const MAX_CHART_POINTS = 2000 // Hard limit to prevent memory issues
+const DOWNSAMPLE_THRESHOLD = 1000 // Start downsampling above this many points
+const LIVE_MODE_MAX_POINTS = 500 // Keep fewer points in live update mode
+const INITIAL_FETCH_LIMIT = 1000 // Reduced from 10000
+
 export function Charts({ status, units, smokeId }: ChartsProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,6 +46,27 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
   const [thermocouples, setThermocouples] = useState<Thermocouple[]>([])
   const chartRef = useRef<ChartJS<'line', number[], string>>(null)
   const isMountedRef = useRef(true)
+
+  // Downsampling function to reduce data points while preserving shape
+  const downsampleData = (data: ChartDataPoint[], targetSize: number): ChartDataPoint[] => {
+    if (data.length <= targetSize) return data
+    
+    const ratio = data.length / targetSize
+    const downsampled: ChartDataPoint[] = []
+    
+    for (let i = 0; i < targetSize; i++) {
+      const index = Math.floor(i * ratio)
+      downsampled.push(data[index])
+    }
+    
+    // Always include the last point for accuracy
+    if (downsampled[downsampled.length - 1] !== data[data.length - 1]) {
+      downsampled.push(data[data.length - 1])
+    }
+    
+    console.log(`📉 Downsampled chart data from ${data.length} to ${downsampled.length} points (ratio: ${ratio.toFixed(2)})`)
+    return downsampled
+  }
 
   // Fetch thermocouples on mount
   useEffect(() => {
@@ -65,9 +92,16 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         const endTime = new Date()
         let params: any = {
           to_time: endTime.toISOString(),
-          limit: 10000, // Backend max limit
+          limit: INITIAL_FETCH_LIMIT, // Reduced limit for better performance
           include_thermocouples: true, // Include thermocouple readings
         }
+        
+        console.log('📊 Chart: Starting data fetch with params:', {
+          limit: INITIAL_FETCH_LIMIT,
+          timeRange,
+          filterMode,
+          smokeId
+        })
         
         // Apply session filter if in session mode and a session is active
         if (filterMode === 'session' && smokeId) {
@@ -109,18 +143,32 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
           // Sort by timestamp to ensure chronological order
           data.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
           
-          // Debug logging
-          console.log('📊 Chart data loaded:', {
-            count: data.length,
-            firstTimestamp: data.length > 0 ? data[0].timestamp : 'N/A',
-            lastTimestamp: data.length > 0 ? data[data.length - 1].timestamp : 'N/A',
+          // Apply downsampling if data exceeds threshold
+          let processedData = data
+          if (data.length > MAX_CHART_POINTS) {
+            console.warn(`⚠️ Chart data exceeds maximum (${data.length} > ${MAX_CHART_POINTS}), applying hard limit`)
+            processedData = downsampleData(data, MAX_CHART_POINTS)
+          } else if (data.length > DOWNSAMPLE_THRESHOLD) {
+            console.log(`📉 Chart data exceeds threshold (${data.length} > ${DOWNSAMPLE_THRESHOLD}), downsampling`)
+            processedData = downsampleData(data, DOWNSAMPLE_THRESHOLD)
+          }
+          
+          // Enhanced logging with memory estimates
+          const estimatedSizeKB = Math.round((JSON.stringify(processedData).length) / 1024)
+          console.log('📊 Chart data loaded and processed:', {
+            originalCount: data.length,
+            processedCount: processedData.length,
+            downsampled: data.length !== processedData.length,
+            estimatedSizeKB,
+            firstTimestamp: processedData.length > 0 ? processedData[0].timestamp : 'N/A',
+            lastTimestamp: processedData.length > 0 ? processedData[processedData.length - 1].timestamp : 'N/A',
             timeRangeHours: timeRange,
             filterMode: filterMode,
             smokeId: smokeId,
-            paramsUsed: params
+            thermocoupleCount: Object.keys(processedData[0]?.thermocouple_readings || {}).length
           })
           
-          setChartData(data)
+          setChartData(processedData)
           setLoading(false)
         }
       } catch (error) {
@@ -184,11 +232,31 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         if (timeRange !== null) {
           const cutoff = new Date(Date.now() - timeRange * 60 * 60 * 1000)
           filtered = updated.filter(point => new Date(point.timestamp) > cutoff)
+        } else {
+          // Even in "entire session" mode, enforce max limit to prevent memory issues
+          if (updated.length > LIVE_MODE_MAX_POINTS) {
+            console.log(`🔪 Live mode pruning: ${updated.length} points exceeds ${LIVE_MODE_MAX_POINTS}, keeping recent points`)
+            // Keep only the most recent points
+            filtered = updated.slice(-LIVE_MODE_MAX_POINTS)
+          } else {
+            filtered = updated
+          }
         }
-        // If timeRange === null, keep all points (entire session)
         
         // Ensure data is sorted chronologically
         filtered.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        
+        // Additional safety: hard cap at MAX_CHART_POINTS
+        if (filtered.length > MAX_CHART_POINTS) {
+          console.warn(`⚠️ Live data exceeded hard limit (${filtered.length} > ${MAX_CHART_POINTS}), downsampling`)
+          filtered = downsampleData(filtered, MAX_CHART_POINTS)
+        }
+        
+        // Periodic logging to track memory usage
+        if (filtered.length % 50 === 0) {
+          const sizeKB = Math.round(JSON.stringify(filtered).length / 1024)
+          console.log(`📈 Live chart update: ${filtered.length} points, ~${sizeKB}KB in memory`)
+        }
         
         return filtered
       })
@@ -431,6 +499,11 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
       },
     },
     plugins: {
+      decimation: {
+        enabled: true,
+        algorithm: 'lttb' as const, // Largest-Triangle-Three-Buckets algorithm for smart downsampling
+        samples: 500, // Target number of samples for rendering
+      },
       legend: {
         position: 'top' as const,
         labels: {
@@ -497,13 +570,23 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
     )
   }
 
+  // Check if data is currently downsampled
+  const isDownsampled = chartData.length >= DOWNSAMPLE_THRESHOLD
+
   return (
     <div className="card">
       {/* Filter and Time Range Selectors */}
       <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
-        <h3 className="text-lg font-semibold text-gray-900">
-          Temperature and Control History
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-lg font-semibold text-gray-900">
+            Temperature and Control History
+          </h3>
+          {isDownsampled && (
+            <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full font-medium" title="Chart data has been downsampled for better performance">
+              ⚡ Optimized ({chartData.length} pts)
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-3 flex-wrap">
           {/* Filter Mode Selector - only show if there's an active session */}
           {smokeId && (
