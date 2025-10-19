@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Relationship, Index
 
 
 # Control mode options
@@ -80,6 +80,14 @@ class Thermocouple(SQLModel, table=True):
 class Reading(SQLModel, table=True):
     """Temperature reading and control state at a point in time."""
     
+    __tablename__ = "reading"
+    __table_args__ = (
+        # Composite index for common query pattern: filtering by smoke_id and time range
+        Index('idx_reading_smoke_ts', 'smoke_id', 'ts'),
+        # Composite index for time-based queries with ordering
+        Index('idx_reading_ts_desc', 'ts'),
+    )
+    
     id: Optional[int] = Field(default=None, primary_key=True)
     ts: datetime = Field(default_factory=datetime.utcnow, index=True)
     smoke_id: Optional[int] = Field(default=None, foreign_key="smoke.id", index=True, description="Session this reading belongs to")
@@ -96,6 +104,12 @@ class Reading(SQLModel, table=True):
 
 class ThermocoupleReading(SQLModel, table=True):
     """Individual thermocouple reading."""
+    
+    __tablename__ = "thermocouplereading"
+    __table_args__ = (
+        # Composite index for fetching all thermocouple readings for a specific reading
+        Index('idx_tc_reading_tc', 'reading_id', 'thermocouple_id'),
+    )
     
     id: Optional[int] = Field(default=None, primary_key=True)
     reading_id: int = Field(foreign_key="reading.id", index=True, description="Parent reading")
