@@ -5,11 +5,14 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from sqlmodel import select, and_, desc
 import csv
 import io
+import logging
+from typing import Dict, List
 
-from db.models import Reading, Alert, Event
+from db.models import Reading, Alert, Event, Thermocouple, ThermocoupleReading
 from db.session import get_session_sync
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/readings.csv")
@@ -18,7 +21,7 @@ async def export_readings_csv(
     to_time: str = Query(..., description="End time (ISO format)"),
     format: str = Query("csv", description="Export format")
 ):
-    """Export temperature readings as CSV."""
+    """Export temperature readings as CSV with all thermocouple data."""
     try:
         # Parse time parameters
         try:
@@ -27,6 +30,8 @@ async def export_readings_csv(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid time format")
         
+        logger.info(f"📥 Exporting readings from {from_dt} to {to_dt}")
+        
         with get_session_sync() as session:
             # Query readings
             query = select(Reading).where(
@@ -34,16 +39,29 @@ async def export_readings_csv(
             ).order_by(Reading.ts)
             
             readings = session.exec(query).all()
+            logger.info(f"📊 Found {len(readings)} readings to export")
+            
+            if not readings:
+                logger.warning("⚠ No readings found in specified time range")
+            
+            # Get all thermocouples (ordered by display order)
+            thermocouples_query = select(Thermocouple).order_by(Thermocouple.order)
+            thermocouples = session.exec(thermocouples_query).all()
+            logger.info(f"🌡️ Found {len(thermocouples)} configured thermocouples")
+            
+            # Build thermocouple ID -> name mapping
+            tc_map: Dict[int, Thermocouple] = {tc.id: tc for tc in thermocouples}
             
             # Create CSV
             output = io.StringIO()
             writer = csv.writer(output)
             
-            # Write header
-            writer.writerow([
+            # Build dynamic header with thermocouple columns
+            header = [
                 "timestamp",
-                "temp_c",
-                "temp_f", 
+                "smoke_id",
+                "control_temp_c",
+                "control_temp_f", 
                 "setpoint_c",
                 "setpoint_f",
                 "output_bool",
@@ -51,12 +69,23 @@ async def export_readings_csv(
                 "loop_ms",
                 "pid_output",
                 "boost_active"
-            ])
+            ]
             
-            # Write data
+            # Add columns for each thermocouple (temp_c, temp_f, fault)
+            for tc in thermocouples:
+                header.append(f"tc_{tc.id}_{tc.name.replace(' ', '_')}_temp_c")
+                header.append(f"tc_{tc.id}_{tc.name.replace(' ', '_')}_temp_f")
+                header.append(f"tc_{tc.id}_{tc.name.replace(' ', '_')}_fault")
+            
+            writer.writerow(header)
+            logger.debug(f"📝 CSV header: {header}")
+            
+            # Write data rows
             for reading in readings:
-                writer.writerow([
+                # Start with main reading data
+                row = [
                     reading.ts.isoformat(),
+                    reading.smoke_id or "",
                     reading.temp_c,
                     reading.temp_f,
                     reading.setpoint_c,
@@ -66,11 +95,40 @@ async def export_readings_csv(
                     reading.loop_ms,
                     reading.pid_output,
                     reading.boost_active
-                ])
+                ]
+                
+                # Query thermocouple readings for this reading
+                tc_readings_query = select(ThermocoupleReading).where(
+                    ThermocoupleReading.reading_id == reading.id
+                )
+                tc_readings = session.exec(tc_readings_query).all()
+                
+                # Build map of thermocouple_id -> reading data
+                tc_data_map: Dict[int, ThermocoupleReading] = {
+                    tc_reading.thermocouple_id: tc_reading 
+                    for tc_reading in tc_readings
+                }
+                
+                # Add thermocouple data in the same order as header
+                for tc in thermocouples:
+                    if tc.id in tc_data_map:
+                        tc_reading = tc_data_map[tc.id]
+                        row.append(tc_reading.temp_c)
+                        row.append(tc_reading.temp_f)
+                        row.append(tc_reading.fault)
+                    else:
+                        # No data for this thermocouple at this timestamp
+                        row.append("")
+                        row.append("")
+                        row.append("")
+                
+                writer.writerow(row)
             
             # Return CSV response
             csv_content = output.getvalue()
             output.close()
+            
+            logger.info(f"✅ CSV export complete: {len(readings)} readings exported")
             
             return Response(
                 content=csv_content,
@@ -83,6 +141,7 @@ async def export_readings_csv(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"❌ Failed to export readings: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to export readings: {str(e)}")
 
 
