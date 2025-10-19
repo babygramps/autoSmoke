@@ -65,7 +65,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         const endTime = new Date()
         let params: any = {
           to_time: endTime.toISOString(),
-          limit: 10000, // Backend max limit
+          limit: 5000, // Reduced from 10000 for better performance
           include_thermocouples: true, // Include thermocouple readings
         }
         

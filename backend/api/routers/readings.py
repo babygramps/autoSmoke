@@ -1,5 +1,6 @@
 """Readings API endpoints."""
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from fastapi import APIRouter, HTTPException, Query
@@ -8,8 +9,10 @@ from sqlmodel import select, and_, desc
 from db.models import Reading, ThermocoupleReading, Thermocouple
 from db.session import get_session_sync
 from core.controller import controller
+from core.performance import perf_monitor
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -17,39 +20,48 @@ async def get_readings(
     smoke_id: Optional[int] = Query(None, description="Filter by smoke session ID"),
     from_time: Optional[str] = Query(None, description="Start time (ISO format)"),
     to_time: Optional[str] = Query(None, description="End time (ISO format)"),
-    limit: int = Query(1000, description="Maximum number of readings", le=10000),
+    limit: int = Query(1000, description="Maximum number of readings", le=5000),  # Reduced max from 10000 to 5000
     include_thermocouples: bool = Query(False, description="Include individual thermocouple readings")
 ):
-    """Get temperature readings with optional filtering."""
+    """Get temperature readings with optional filtering.
+    
+    NOTE: For better performance with large datasets, use pagination with time ranges
+    rather than requesting all data at once.
+    """
     try:
-        with get_session_sync() as session:
-            # Build query
-            query = select(Reading)
-            
-            # Filter by smoke session if provided
-            if smoke_id is not None:
-                query = query.where(Reading.smoke_id == smoke_id)
-            
-            # Apply time filters
-            if from_time:
-                try:
-                    from_dt = datetime.fromisoformat(from_time.replace('Z', '+00:00'))
-                    query = query.where(Reading.ts >= from_dt)
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="Invalid from_time format")
-            
-            if to_time:
-                try:
-                    to_dt = datetime.fromisoformat(to_time.replace('Z', '+00:00'))
-                    query = query.where(Reading.ts <= to_dt)
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="Invalid to_time format")
-            
-            # Apply limit and ordering
-            query = query.order_by(desc(Reading.ts)).limit(limit)
-            
-            # Execute query
-            readings = session.exec(query).all()
+        with perf_monitor.measure("get_readings_api", log_slow_threshold_ms=500):
+            with get_session_sync() as session:
+                # Build query
+                with perf_monitor.measure("readings_query_build", log_slow_threshold_ms=10):
+                    query = select(Reading)
+                    
+                    # Filter by smoke session if provided
+                    if smoke_id is not None:
+                        query = query.where(Reading.smoke_id == smoke_id)
+                    
+                    # Apply time filters
+                    if from_time:
+                        try:
+                            from_dt = datetime.fromisoformat(from_time.replace('Z', '+00:00'))
+                            query = query.where(Reading.ts >= from_dt)
+                        except ValueError:
+                            raise HTTPException(status_code=400, detail="Invalid from_time format")
+                    
+                    if to_time:
+                        try:
+                            to_dt = datetime.fromisoformat(to_time.replace('Z', '+00:00'))
+                            query = query.where(Reading.ts <= to_dt)
+                        except ValueError:
+                            raise HTTPException(status_code=400, detail="Invalid to_time format")
+                    
+                    # Apply limit and ordering
+                    query = query.order_by(desc(Reading.ts)).limit(limit)
+                
+                # Execute query
+                with perf_monitor.measure("readings_query_execute", log_slow_threshold_ms=200):
+                    readings = session.exec(query).all()
+                
+                logger.info(f"📊 Fetched {len(readings)} readings (limit: {limit}, smoke_id: {smoke_id})")
             
             # Optionally fetch thermocouple readings for each reading
             result_readings = []

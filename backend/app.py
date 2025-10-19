@@ -18,8 +18,19 @@ from db.session import create_db_and_tables
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Startup
     create_db_and_tables()
+    
+    # Run startup migrations (indexes, optimizations)
+    logger.info("Running startup migrations and optimizations...")
+    try:
+        from startup_migrations import run_migrations
+        run_migrations()
+    except Exception as e:
+        logger.warning(f"Startup migrations failed (non-critical): {e}")
     
     # Seed default recipes
     from api.routers.recipes import seed_default_recipes
@@ -54,7 +65,7 @@ app.add_middleware(
 )
 
 # Include API routers
-from api.routers import control, readings, settings as settings_router, alerts, export, smokes, thermocouples, recipes
+from api.routers import control, readings, settings as settings_router, alerts, export, smokes, thermocouples, recipes, maintenance
 app.include_router(control.router, prefix="/api/control", tags=["control"])
 app.include_router(readings.router, prefix="/api/readings", tags=["readings"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
@@ -63,6 +74,7 @@ app.include_router(export.router, prefix="/api/export", tags=["export"])
 app.include_router(smokes.router, prefix="/api/smokes", tags=["smokes"])
 app.include_router(thermocouples.router, prefix="/api/thermocouples", tags=["thermocouples"])
 app.include_router(recipes.router, prefix="/api/recipes", tags=["recipes"])
+app.include_router(maintenance.router, prefix="/api/maintenance", tags=["maintenance"])
 
 # Include WebSocket router
 from ws.manager import router as ws_router
