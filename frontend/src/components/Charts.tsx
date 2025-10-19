@@ -92,11 +92,7 @@ export function Charts({ status, units, smokeId }: ChartsProps) {
         const endTime = new Date()
         let params: any = {
           to_time: endTime.toISOString(),
-<<<<<<< HEAD
-          limit: 5000, // Reduced from 10000 for better performance
-=======
           limit: INITIAL_FETCH_LIMIT, // Reduced limit for better performance
->>>>>>> charts-improvements
           include_thermocouples: true, // Include thermocouple readings
         }
         
