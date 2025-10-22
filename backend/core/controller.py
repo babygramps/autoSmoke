@@ -7,12 +7,15 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from core.config import settings, ControlMode
-from core.hardware import create_temp_sensor, create_relay_driver, SimTempSensor, MultiThermocoupleManager
+from core.control import ThermostatStrategy, TimeProportionalStrategy
+from core.hardware import SimTempSensor
+from core.hardware_service import HardwareService
+from core.session_service import SessionService
 from core.pid import PIDController
 from core.pid_autotune import PIDAutoTuner, TuningRule, AutoTuneState
 from core.adaptive_pid import AdaptivePIDController
 from core.alerts import alert_manager
-from db.models import Smoke, Reading, Event, Settings as DBSettings, Thermocouple, ThermocoupleReading, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
+from db.models import Smoke, Reading, Event, Settings as DBSettings, ThermocoupleReading, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
 from db.session import get_session_sync
 
 logger = logging.getLogger(__name__)
@@ -37,28 +40,6 @@ class SmokerController:
         gpio_pin = db_settings.gpio_pin if db_settings else settings.smoker_gpio_pin
         relay_active_high = db_settings.relay_active_high if db_settings else settings.smoker_relay_active_high
         
-        # Hardware (pass sim_mode explicitly to avoid environment variable issues)
-        self.temp_sensor = create_temp_sensor()  # Kept for backward compatibility
-        self.relay_driver = self._create_relay_driver(gpio_pin, relay_active_high)
-        
-        # Multi-thermocouple manager (using database sim_mode setting)
-        self.tc_manager = MultiThermocoupleManager(sim_mode=self.sim_mode)
-        self.control_tc_id = None  # ID of the control thermocouple
-        self.tc_readings = {}  # Latest readings: {tc_id: (temp_c, fault)}
-        
-        # PID Controller
-        self.pid = PIDController(
-            kp=db_settings.kp if db_settings else settings.smoker_pid_kp,
-            ki=db_settings.ki if db_settings else settings.smoker_pid_ki,
-            kd=db_settings.kd if db_settings else settings.smoker_pid_kd
-        )
-        
-        # Control mode
-        if db_settings:
-            self.control_mode = db_settings.control_mode
-        else:
-            self.control_mode = settings.smoker_control_mode
-        
         # Control state
         if db_settings:
             self.setpoint_c = db_settings.setpoint_c
@@ -66,13 +47,32 @@ class SmokerController:
         else:
             self.setpoint_c = settings.get_setpoint_celsius()
             self.setpoint_f = settings.get_setpoint_fahrenheit()
-        
-        # Load thermocouples from database (after setpoint is initialized)
-        self._load_thermocouples()
-        
-        # Check for hardware fallback immediately after loading (creates alert if needed)
-        self._check_hardware_fallback_on_init()
-        
+
+        # Hardware orchestration
+        self.hardware_service = HardwareService(
+            sim_mode=self.sim_mode,
+            gpio_pin=gpio_pin,
+            relay_active_high=relay_active_high,
+            setpoint_c=self.setpoint_c,
+        )
+        self._sync_hardware_state()
+        self.hardware_service.load_thermocouples(self.setpoint_c)
+        self._sync_hardware_state()
+        self.hardware_service.check_hardware_fallback()
+
+        # PID Controller
+        self.pid = PIDController(
+            kp=db_settings.kp if db_settings else settings.smoker_pid_kp,
+            ki=db_settings.ki if db_settings else settings.smoker_pid_ki,
+            kd=db_settings.kd if db_settings else settings.smoker_pid_kd
+        )
+
+        # Control mode
+        if db_settings:
+            self.control_mode = db_settings.control_mode
+        else:
+            self.control_mode = settings.smoker_control_mode
+
         self.current_temp_c = None
         self.current_temp_f = None
         self.pid_output = 0.0
@@ -92,8 +92,11 @@ class SmokerController:
         self.window_on_duration = 0.0
         
         # Active smoking session
-        self.active_smoke_id = None
-        self._load_active_smoke()
+        self.session_service = SessionService()
+        session_load = self.session_service.load_active_smoke()
+        self.active_smoke_id = session_load.smoke_id
+        if session_load.phase_setpoint_f is not None:
+            self._apply_loaded_setpoint(session_load.phase_setpoint_f)
         
         # Control loop task
         self._control_task = None
@@ -117,7 +120,12 @@ class SmokerController:
         elif not db_settings and self.control_mode == CONTROL_MODE_TIME_PROPORTIONAL:
             # Default to enabled if no DB settings
             self.adaptive_pid.enable()
-        
+
+        self.control_strategies = {
+            CONTROL_MODE_THERMOSTAT: ThermostatStrategy(),
+            CONTROL_MODE_TIME_PROPORTIONAL: TimeProportionalStrategy(),
+        }
+
         logger.info("SmokerController initialized")
     
     def _load_db_settings(self):
@@ -135,85 +143,23 @@ class SmokerController:
             logger.warning(f"Failed to load database settings: {e}. Using config defaults.")
             return None
     
-    def _create_relay_driver(self, gpio_pin: int, active_high: bool):
-        """Create relay driver based on current sim_mode."""
-        if self.sim_mode:
-            from core.hardware import SimRelayDriver
-            logger.info("Creating simulated relay driver")
-            return SimRelayDriver()
-        else:
-            from core.hardware import RealRelayDriver
-            logger.info(f"Creating real relay driver (GPIO pin={gpio_pin}, active_high={active_high})")
-            return RealRelayDriver(pin=gpio_pin, active_high=active_high, force_real=True)
-    
-    def _load_thermocouples(self):
-        """Load thermocouple configurations from database and initialize hardware."""
-        try:
-            with get_session_sync() as session:
-                from sqlmodel import select
-                # Get all enabled thermocouples
-                statement = select(Thermocouple).where(Thermocouple.enabled == True).order_by(Thermocouple.order)
-                thermocouples = session.exec(statement).all()
-                
-                if not thermocouples:
-                    logger.warning("No thermocouples configured in database")
-                    return
-                
-                # Add each thermocouple to the manager
-                for tc in thermocouples:
-                    self.tc_manager.add_thermocouple(tc.id, tc.cs_pin, tc.name)
-                    if tc.is_control:
-                        self.control_tc_id = tc.id
-                        logger.info(f"Control thermocouple set to: {tc.name} (ID={tc.id})")
-                
-                if self.control_tc_id is None and thermocouples:
-                    # No control thermocouple set, use the first one
-                    self.control_tc_id = thermocouples[0].id
-                    logger.warning(f"No control thermocouple specified, using first: {thermocouples[0].name}")
-                
-                logger.info(f"Loaded {len(thermocouples)} thermocouple(s)")
-                
-                # Update simulation sensors with current setpoint
-                if settings.smoker_sim_mode:
-                    self.tc_manager.update_setpoint(self.setpoint_c)
-                
-        except Exception as e:
-            logger.error(f"Failed to load thermocouples: {e}")
-    
-    def _check_hardware_fallback_on_init(self):
-        """Check for hardware fallback during initialization and create alert if needed."""
-        if not self.sim_mode and self.tc_manager.has_fallback_sensors():
-            fallback_status = self.tc_manager.get_fallback_status()
-            fallback_tcs = []
-            
-            try:
-                with get_session_sync() as session:
-                    for tc_id, mode in fallback_status.items():
-                        if mode == "simulated":
-                            tc = session.get(Thermocouple, tc_id)
-                            if tc:
-                                fallback_tcs.append(f"{tc.name} (pin {tc.cs_pin})")
-                                logger.warning(f"⚠ Thermocouple '{tc.name}' is using FALLBACK SIMULATION - check hardware connection!")
-            except Exception as e:
-                logger.error(f"Error checking fallback status: {e}")
-            
-            if fallback_tcs:
-                logger.error("=" * 60)
-                logger.error("HARDWARE FALLBACK DETECTED!")
-                logger.error(f"The following thermocouples are NOT connected:")
-                for tc in fallback_tcs:
-                    logger.error(f"  - {tc}")
-                logger.error("Simulation mode is OFF but hardware is not responding.")
-                logger.error("Check your thermocouple connections and CS pins!")
-                logger.error("=" * 60)
+    def _sync_hardware_state(self) -> None:
+        self.temp_sensor = self.hardware_service.temp_sensor
+        self.relay_driver = self.hardware_service.relay_driver
+        self.tc_manager = self.hardware_service.tc_manager
+        self.tc_readings = self.hardware_service.tc_readings
+        self.control_tc_id = self.hardware_service.control_tc_id
+
+    def _apply_loaded_setpoint(self, setpoint_f: float) -> None:
+        self.setpoint_f = setpoint_f
+        self.setpoint_c = settings.fahrenheit_to_celsius(setpoint_f)
+        self.hardware_service.update_simulation_setpoint(self.setpoint_c)
     
     def reload_thermocouples(self):
         """Reload thermocouple configuration (call after DB changes)."""
-        # Clear existing thermocouples
-        self.tc_readings = {}
-        # Reload from DB
-        self._load_thermocouples()
-    
+        self.hardware_service.load_thermocouples(self.setpoint_c)
+        self._sync_hardware_state()
+
     def reload_hardware(self, new_sim_mode: bool, gpio_pin: int = None, relay_active_high: bool = None):
         """
         Reload hardware with new simulation mode setting.
@@ -245,31 +191,26 @@ class SmokerController:
                 gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
                 relay_active_high = relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
         
-        # Clean up old relay driver
-        if hasattr(self.relay_driver, 'close'):
-            logger.info("Closing old relay driver")
-            self.relay_driver.close()
-        
-        # Recreate the relay driver with new sim_mode
-        self.relay_driver = self._create_relay_driver(gpio_pin, relay_active_high)
-        
-        # Recreate the thermocouple manager with new sim_mode
-        self.tc_manager = MultiThermocoupleManager(sim_mode=self.sim_mode)
-        self.tc_readings = {}
-        
-        # Reload thermocouple configurations
-        self._load_thermocouples()
-        
-        logger.info(f"Hardware reloaded successfully with sim_mode={self.sim_mode}, GPIO pin={gpio_pin}, active_high={relay_active_high}")
-        return True
-    
+        reloaded = self.hardware_service.reload_hardware(
+            new_sim_mode=new_sim_mode,
+            setpoint_c=self.setpoint_c,
+            gpio_pin=gpio_pin,
+            relay_active_high=relay_active_high,
+        )
+        self._sync_hardware_state()
+        logger.info(
+            "Hardware reloaded successfully with sim_mode=%s, GPIO pin=%s, active_high=%s",
+            self.sim_mode,
+            gpio_pin,
+            relay_active_high,
+        )
+        return reloaded
+
     def update_relay_settings(self, gpio_pin: int = None, relay_active_high: bool = None):
         """
         Update relay GPIO settings without requiring controller restart.
         Can be called when controller is running or stopped.
         """
-        from core.hardware import RealRelayDriver
-        
         # Get current settings if not provided
         if gpio_pin is None or relay_active_high is None:
             try:
@@ -289,64 +230,24 @@ class SmokerController:
         if self.sim_mode:
             logger.info(f"Sim mode active, GPIO settings updated in DB but not applied: pin={gpio_pin}, active_high={relay_active_high}")
             return True
-        
-        # Check if it's a RealRelayDriver that supports reinitialize
-        if isinstance(self.relay_driver, RealRelayDriver) and hasattr(self.relay_driver, 'reinitialize'):
-            logger.info(f"Updating relay settings: GPIO pin={gpio_pin}, active_high={relay_active_high}")
-            self.relay_driver.reinitialize(pin=gpio_pin, active_high=relay_active_high)
+
+        updated = self.hardware_service.update_relay_settings(gpio_pin, relay_active_high)
+        self._sync_hardware_state()
+        if updated:
             logger.info("✓ Relay settings updated successfully")
-            return True
-        else:
-            logger.warning("Relay driver does not support runtime reconfiguration")
-            return False
-    
-    def _load_active_smoke(self):
-        """Load or create active smoking session."""
-        try:
-            with get_session_sync() as session:
-                # Find active smoke session
-                from sqlmodel import select
-                statement = select(Smoke).where(Smoke.is_active == True)
-                active_smoke = session.exec(statement).first()
-                
-                if active_smoke:
-                    self.active_smoke_id = active_smoke.id
-                    logger.info(f"Loaded active smoke session: {active_smoke.name} (ID: {active_smoke.id})")
-                    
-                    # Load current phase and apply its setpoint
-                    try:
-                        from core.phase_manager import phase_manager
-                        current_phase = phase_manager.get_current_phase(active_smoke.id)
-                        
-                        if current_phase:
-                            self.set_setpoint(current_phase.target_temp_f)
-                            logger.info(f"Applied phase setpoint from loaded session: {current_phase.phase_name} @ {current_phase.target_temp_f}°F")
-                    except Exception as e:
-                        logger.warning(f"Failed to load phase settings for loaded session: {e}")
-                else:
-                    logger.info("No active smoke session found")
-        except Exception as e:
-            logger.warning(f"Failed to load active smoke: {e}")
-            self.active_smoke_id = None
+        return updated
     
     def set_active_smoke(self, smoke_id: int):
         """Set the active smoking session and load phase settings."""
-        self.active_smoke_id = smoke_id
-        logger.info(f"Active smoke session set to ID: {smoke_id}")
-        
-        # Load current phase and apply its setpoint
-        try:
-            from core.phase_manager import phase_manager
-            current_phase = phase_manager.get_current_phase(smoke_id)
-            
-            if current_phase:
-                # Set controller setpoint to current phase target
-                self.set_setpoint(current_phase.target_temp_f)
-                logger.info(f"Applied phase setpoint: {current_phase.phase_name} @ {current_phase.target_temp_f}°F")
-            else:
-                logger.warning(f"No active phase found for smoke {smoke_id}, setpoint not changed")
-        except Exception as e:
-            logger.error(f"Failed to load phase settings for smoke {smoke_id}: {e}")
+        result = self.session_service.set_active_smoke(smoke_id)
+        self.active_smoke_id = result.smoke_id
+
+        if result.phase_setpoint_f is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.set_setpoint(result.phase_setpoint_f))
+            except RuntimeError:
+                self._apply_loaded_setpoint(result.phase_setpoint_f)
     
     def start_monitoring(self):
         """Start the always-on temperature monitoring loop."""
@@ -382,15 +283,14 @@ class SmokerController:
         
         # If there's an active session, load phase settings before starting
         if self.active_smoke_id:
-            try:
-                from core.phase_manager import phase_manager
-                current_phase = phase_manager.get_current_phase(self.active_smoke_id)
-                
-                if current_phase:
-                    self.set_setpoint(current_phase.target_temp_f)
-                    logger.info(f"Starting with phase setpoint: {current_phase.phase_name} @ {current_phase.target_temp_f}°F")
-            except Exception as e:
-                logger.warning(f"Failed to load phase settings on start: {e}")
+            phase_info = self.session_service.get_current_phase_info()
+            if phase_info and phase_info.get("target_temp_f") is not None:
+                await self.set_setpoint(phase_info["target_temp_f"])
+                logger.info(
+                    "Starting with phase setpoint: %s @ %s°F",
+                    phase_info.get("phase_name"),
+                    phase_info.get("target_temp_f"),
+                )
         
         self.running = True
         self._control_task = asyncio.create_task(self._control_loop())
@@ -461,13 +361,18 @@ class SmokerController:
         self.hyst_c = hyst_c
         if time_window_s is not None:
             self.time_window_s = time_window_s
-        
+
         await self._log_event(
             "timing_params_change",
             f"Timing updated: min_on={min_on_s}s, min_off={min_off_s}s, hyst={hyst_c:.1f}°C, window={self.time_window_s}s"
         )
         logger.info(f"Timing parameters updated: min_on={min_on_s}s, min_off={min_off_s}s, hyst={hyst_c:.1f}°C, window={self.time_window_s}s")
-    
+
+    def _pid_to_boolean(self, temp_c: float) -> bool:
+        if self.output_bool:
+            return temp_c < (self.setpoint_c + self.hyst_c)
+        return temp_c < (self.setpoint_c - self.hyst_c)
+
     async def set_control_mode(self, mode: str):
         """Update control mode."""
         old_mode = self.control_mode
@@ -504,6 +409,26 @@ class SmokerController:
             f"Control mode changed from {old_mode} to {mode}"
         )
         logger.info(f"Control mode changed from {old_mode} to {mode}")
+
+    async def apply_adaptive_pid_adjustment(self, kp: float, ki: float, kd: float, reason: str) -> None:
+        await self.set_pid_gains(kp, ki, kd)
+
+        try:
+            with get_session_sync() as session:
+                db_settings = session.get(DBSettings, 1)
+                if db_settings:
+                    db_settings.kp = kp
+                    db_settings.ki = ki
+                    db_settings.kd = kd
+                    session.add(db_settings)
+                    session.commit()
+        except Exception as exc:
+            logger.error(f"Failed to save adaptive PID gains: {exc}")
+
+        await self._log_event(
+            "adaptive_pid_adjustment",
+            f"Adaptive PID: {reason} | Kp={kp:.4f}, Ki={ki:.4f}, Kd={kd:.4f}",
+        )
     
     async def enable_boost(self, duration_s: int = None):
         """Enable boost mode for specified duration."""
@@ -736,8 +661,9 @@ class SmokerController:
         while True:  # Runs forever
             try:
                 # Read temperatures from all thermocouples
-                self.tc_readings = await self.tc_manager.read_all()
-                
+                self.tc_readings = await self.hardware_service.read_thermocouples()
+                self.control_tc_id = self.hardware_service.control_tc_id
+
                 # Get control thermocouple temperature
                 control_temp_c = None
                 control_fault = True
@@ -826,113 +752,21 @@ class SmokerController:
             self.output_bool = True
             await self._set_relay_state(True)
         else:
-            # Normal control based on mode
-            if self.control_mode == CONTROL_MODE_THERMOSTAT:
-                # Thermostat mode - simple on/off with hysteresis
-                await self._thermostat_control(temp_c)
+            strategy = self.control_strategies.get(self.control_mode)
+            if strategy:
+                await strategy.execute(self, temp_c)
             else:
-                # Time-proportional mode - PID with duty cycle control
-                await self._time_proportional_control(temp_c)
-        
+                logger.error("No control strategy found for mode: %s", self.control_mode)
+
         # Check phase conditions (if session has phases)
         if self.active_smoke_id:
-            await self._check_phase_conditions(temp_c)
+            await self.session_service.check_phase_conditions(temp_c, self.tc_readings, self._log_event)
         
         # Note: Readings are logged by monitoring loop, not here
         # This prevents duplicate logging when controller is running
         
         # Check alerts
         await alert_manager.check_alerts(self.get_status())
-    
-    async def _thermostat_control(self, temp_c: float):
-        """
-        Thermostat control mode - simple on/off with hysteresis.
-        No PID involved, just temperature-based switching.
-        """
-        # Determine desired state based on hysteresis
-        if self.output_bool:
-            # Currently ON - turn OFF when temp exceeds setpoint + hysteresis
-            self.output_bool = temp_c < (self.setpoint_c + self.hyst_c)
-        else:
-            # Currently OFF - turn ON when temp drops below setpoint - hysteresis
-            self.output_bool = temp_c < (self.setpoint_c - self.hyst_c)
-        
-        # Set PID output to 0 or 100 for logging consistency
-        self.pid_output = 100.0 if self.output_bool else 0.0
-        
-        # Apply relay state with timing constraints
-        await self._apply_relay_with_timing(self.output_bool)
-    
-    async def _time_proportional_control(self, temp_c: float):
-        """
-        Time-proportional control mode - uses PID output to control duty cycle.
-        PID outputs 0-100%, which determines ON time within a time window.
-        
-        Example: If PID output is 60% and time window is 10s,
-        relay is ON for 6s and OFF for 4s in each 10s window.
-        """
-        # Record sample for adaptive PID (only if not auto-tuning)
-        if not self.autotune_active:
-            error = self.setpoint_c - temp_c
-            self.adaptive_pid.record_sample(temp_c, self.setpoint_c, error)
-            
-            # Check if adaptive PID suggests an adjustment
-            adjustment = self.adaptive_pid.evaluate_and_adjust(
-                self.pid.kp,
-                self.pid.ki,
-                self.pid.kd
-            )
-            
-            if adjustment:
-                new_kp, new_ki, new_kd, reason = adjustment
-                # Apply the adaptive adjustment
-                await self.set_pid_gains(new_kp, new_ki, new_kd)
-                
-                # Save to database
-                try:
-                    with get_session_sync() as session:
-                        db_settings = session.get(DBSettings, 1)
-                        if db_settings:
-                            db_settings.kp = new_kp
-                            db_settings.ki = new_ki
-                            db_settings.kd = new_kd
-                            session.add(db_settings)
-                            session.commit()
-                except Exception as e:
-                    logger.error(f"Failed to save adaptive PID gains: {e}")
-                
-                await self._log_event(
-                    "adaptive_pid_adjustment",
-                    f"Adaptive PID: {reason} | Kp={new_kp:.4f}, Ki={new_ki:.4f}, Kd={new_kd:.4f}"
-                )
-        
-        # Compute PID output (0-100%)
-        self.pid_output = self.pid.compute(self.setpoint_c, temp_c)
-        
-        now = time.time()
-        
-        # Initialize window if needed
-        if self.window_start_time is None:
-            self.window_start_time = now
-            # Calculate ON duration for this window
-            self.window_on_duration = (self.pid_output / 100.0) * self.time_window_s
-        
-        # Check if we're in a new window
-        elapsed = now - self.window_start_time
-        if elapsed >= self.time_window_s:
-            # Start new window
-            self.window_start_time = now
-            self.window_on_duration = (self.pid_output / 100.0) * self.time_window_s
-            elapsed = 0
-        
-        # Determine if relay should be ON in this window
-        if elapsed < self.window_on_duration:
-            self.output_bool = True
-        else:
-            self.output_bool = False
-        
-        # Apply relay state (no min on/off timing for time-proportional mode)
-        await self._set_relay_state(self.output_bool)
     
     async def _autotune_control(self, temp_c: float):
         """
@@ -1018,6 +852,12 @@ class SmokerController:
             await self.relay_driver.set_state(state)
             self.relay_state = state
             logger.debug(f"Relay {'ON' if state else 'OFF'}")
+
+    async def apply_relay_with_timing(self, desired_state: bool) -> None:
+        await self._apply_relay_with_timing(desired_state)
+
+    async def set_relay_state(self, state: bool) -> None:
+        await self._set_relay_state(state)
     
     async def _log_reading(self):
         """Log current reading to database."""
@@ -1070,110 +910,8 @@ class SmokerController:
         except Exception as e:
             logger.error(f"Failed to log event: {e}")
     
-    async def _check_phase_conditions(self, temp_c: float):
-        """Check if current phase conditions are met and request transition if needed."""
-        try:
-            from core.phase_manager import phase_manager
-            from db.models import Smoke, SmokePhase
-            
-            # Get smoke session
-            with get_session_sync() as session:
-                smoke = session.get(Smoke, self.active_smoke_id)
-                if not smoke or not smoke.current_phase_id:
-                    return  # No active phase
-                
-                # Don't check if already pending transition
-                if smoke.pending_phase_transition:
-                    return
-                
-                # Get current phase to check if it's paused
-                current_phase = session.get(SmokePhase, smoke.current_phase_id)
-                if not current_phase:
-                    return
-                
-                # Don't check conditions if phase is paused
-                if current_phase.is_paused:
-                    return
-                
-                meat_probe_tc_id = smoke.meat_probe_tc_id
-            
-            # Get meat temperature if meat probe is configured
-            meat_temp_f = None
-            if meat_probe_tc_id and meat_probe_tc_id in self.tc_readings:
-                meat_temp_c, fault = self.tc_readings[meat_probe_tc_id]
-                if not fault and meat_temp_c is not None:
-                    meat_temp_f = settings.celsius_to_fahrenheit(meat_temp_c)
-            
-            # Check if phase conditions are met
-            current_temp_f = settings.celsius_to_fahrenheit(temp_c)
-            conditions_met, reason = phase_manager.check_phase_conditions(
-                self.active_smoke_id,
-                current_temp_f,
-                meat_temp_f
-            )
-            
-            if conditions_met:
-                # Request phase transition
-                success = phase_manager.request_phase_transition(self.active_smoke_id, reason)
-                if success:
-                    logger.info(f"Phase transition requested for smoke {self.active_smoke_id}: {reason}")
-                    
-                    # Emit websocket event
-                    try:
-                        from ws.manager import manager as ws_manager
-                        current_phase = phase_manager.get_current_phase(self.active_smoke_id)
-                        next_phase = phase_manager.get_next_phase(self.active_smoke_id)
-                        
-                        await ws_manager.broadcast_phase_event("phase_transition_ready", {
-                            "smoke_id": self.active_smoke_id,
-                            "reason": reason,
-                            "current_phase": {
-                                "id": current_phase.id,
-                                "phase_name": current_phase.phase_name,
-                                "target_temp_f": current_phase.target_temp_f
-                            } if current_phase else None,
-                            "next_phase": {
-                                "id": next_phase.id,
-                                "phase_name": next_phase.phase_name,
-                                "target_temp_f": next_phase.target_temp_f
-                            } if next_phase else None
-                        })
-                    except Exception as e:
-                        logger.error(f"Failed to broadcast phase transition event: {e}")
-                    
-                    await self._log_event(
-                        "phase_transition_ready",
-                        f"Phase transition ready: {reason}"
-                    )
-        
-        except Exception as e:
-            logger.error(f"Failed to check phase conditions: {e}")
-    
     def get_current_phase_info(self) -> Optional[dict]:
-        """Get current phase information for status."""
-        try:
-            from core.phase_manager import phase_manager
-            
-            if not self.active_smoke_id:
-                return None
-            
-            current_phase = phase_manager.get_current_phase(self.active_smoke_id)
-            if not current_phase:
-                return None
-            
-            import json
-            return {
-                "id": current_phase.id,
-                "phase_name": current_phase.phase_name,
-                "phase_order": current_phase.phase_order,
-                "target_temp_f": current_phase.target_temp_f,
-                "started_at": current_phase.started_at.isoformat() if current_phase.started_at else None,
-                "is_active": current_phase.is_active,
-                "completion_conditions": json.loads(current_phase.completion_conditions)
-            }
-        except Exception as e:
-            logger.error(f"Failed to get current phase info: {e}")
-            return None
+        return self.session_service.get_current_phase_info()
     
     def get_status(self) -> dict:
         """Get current controller status."""
