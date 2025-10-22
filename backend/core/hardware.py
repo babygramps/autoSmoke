@@ -615,22 +615,3 @@ class MultiThermocoupleManager:
             return gpio_map.get(gpio_num)
         except ImportError:
             return None
-
-
-def create_temp_sensor() -> TempSensor:
-    """Create temperature sensor based on configuration."""
-    if settings.smoker_sim_mode:
-        return SimTempSensor()
-    else:
-        return RealTempSensor()
-
-
-def create_relay_driver() -> RelayDriver:
-    """Create relay driver based on configuration."""
-    if settings.smoker_sim_mode:
-        return SimRelayDriver()
-    else:
-        return RealRelayDriver(
-            pin=settings.smoker_gpio_pin,
-            active_high=settings.smoker_relay_active_high
-        )
