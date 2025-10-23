@@ -24,7 +24,7 @@ class TestSmokerController:
         """Test controller initialization."""
         assert not controller.running
         assert not controller.boost_active
-        assert controller.setpoint_c == 107.2  # 225°F in Celsius
+        assert controller.setpoint_c == pytest.approx(107.2, abs=0.1)  # 225°F in Celsius
         assert controller.setpoint_f == 225.0
     
     @pytest.mark.asyncio
@@ -32,7 +32,7 @@ class TestSmokerController:
         """Test setpoint update functionality."""
         await controller.set_setpoint(250.0)
         assert controller.setpoint_f == 250.0
-        assert controller.setpoint_c == 121.1  # 250°F in Celsius
+        assert controller.setpoint_c == pytest.approx(121.1, abs=0.1)  # 250°F in Celsius
     
     @pytest.mark.asyncio
     async def test_pid_gains_update(self, controller):

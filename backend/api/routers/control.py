@@ -3,14 +3,11 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
 
-from core.controller import controller
+from core.controller import controller, settings_repo
 from core.alerts import alert_manager
 from core.config import settings
 from core.pid_autotune import TuningRule
-from db.models import Settings as DBSettings
-from db.session import get_session_sync
 
 router = APIRouter()
 
@@ -91,17 +88,7 @@ async def set_setpoint(request: SetpointRequest):
         await controller.set_setpoint(setpoint_f)
         
         # Persist to database
-        with get_session_sync() as session:
-            db_settings = session.get(DBSettings, 1)
-            if not db_settings:
-                db_settings = DBSettings()
-                session.add(db_settings)
-            
-            db_settings.setpoint_f = setpoint_f
-            db_settings.setpoint_c = setpoint_c
-            db_settings.updated_at = datetime.utcnow()
-            
-            session.commit()
+        await settings_repo.set_setpoint_async(setpoint_f, setpoint_c)
         
         return {
             "status": "success",
