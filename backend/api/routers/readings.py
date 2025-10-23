@@ -8,7 +8,6 @@ from sqlmodel import select, and_, desc
 
 from db.models import Reading, ThermocoupleReading, Thermocouple
 from db.session import get_session_sync
-from core.controller import controller
 from core.performance import perf_monitor
 
 router = APIRouter()

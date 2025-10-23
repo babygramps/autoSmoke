@@ -4,12 +4,15 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import TYPE_CHECKING, Dict, List, Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 
-from core.controller import controller
-from core.alerts import alert_manager
+from core.app_state import get_service_container
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only imports
+    from core.alerts import AlertManager
+    from core.controller import SmokerController
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +21,13 @@ router = APIRouter()
 
 class ConnectionManager:
     """Manages WebSocket connections and broadcasting."""
-    
-    def __init__(self):
+
+    def __init__(self, *, controller: "SmokerController", alert_manager: "AlertManager"):
         self.active_connections: List[WebSocket] = []
         self.broadcast_task = None
         self.running = False
+        self.controller = controller
+        self.alert_manager = alert_manager
     
     async def start_broadcasting(self):
         """Start the broadcast task."""
@@ -32,7 +37,7 @@ class ConnectionManager:
             logger.info("WebSocket broadcasting started")
             
             # Start always-on temperature monitoring
-            controller.start_monitoring()
+            self.controller.start_monitoring()
             logger.info("Controller monitoring started (temperatures will always be read)")
     
     async def stop_broadcasting(self):
@@ -113,11 +118,11 @@ class ConnectionManager:
         while self.running:
             try:
                 # Get current controller status
-                status = controller.get_status()
+                status = self.controller.get_status()
                 
                 # Get alert summary and alerts
-                alert_summary = await alert_manager.get_alert_summary()
-                alerts = await alert_manager.get_active_alerts()
+                alert_summary = await self.alert_manager.get_alert_summary()
+                alerts = await self.alert_manager.get_active_alerts()
                 
                 # Create telemetry message
                 telemetry = {
@@ -179,13 +184,10 @@ class ConnectionManager:
             await asyncio.sleep(1.0)
 
 
-# Global connection manager
-manager = ConnectionManager()
-
-
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time telemetry."""
+    manager = get_service_container(websocket.app).connection_manager
     await manager.connect(websocket)
     
     try:
@@ -204,19 +206,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
             except json.JSONDecodeError:
                 logger.warning(f"Received invalid JSON from client: {data}")
-            
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
-
-
-async def start_websocket_broadcasting():
-    """Start WebSocket broadcasting (called on app startup)."""
-    await manager.start_broadcasting()
-
-
-async def stop_websocket_broadcasting():
-    """Stop WebSocket broadcasting (called on app shutdown)."""
-    await manager.stop_broadcasting()

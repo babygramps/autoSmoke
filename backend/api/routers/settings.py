@@ -1,14 +1,20 @@
 """Settings API endpoints."""
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Annotated, Optional
 
-from core.controller import controller, settings_repo
+from core.container import get_controller, get_settings_repository
+from core.controller import SmokerController
 from core.config import settings
+from db.repositories import SettingsRepository
 
 logger = logging.getLogger(__name__)
+
+ControllerDep = Annotated[SmokerController, Depends(get_controller)]
+SettingsRepoDep = Annotated[SettingsRepository, Depends(get_settings_repository)]
+
 router = APIRouter()
 
 
@@ -62,7 +68,7 @@ def _serialize_settings(db_settings) -> dict:
 
 
 @router.get("")
-async def get_settings():
+async def get_settings(settings_repo: SettingsRepoDep):
     """Get current system settings."""
     try:
         db_settings = await settings_repo.get_settings_async(ensure=True)
@@ -74,7 +80,11 @@ async def get_settings():
 
 
 @router.put("")
-async def update_settings(settings_update: SettingsUpdate):
+async def update_settings(
+    settings_update: SettingsUpdate,
+    controller: ControllerDep,
+    settings_repo: SettingsRepoDep,
+):
     """Update system settings."""
     try:
         current_settings = await settings_repo.get_settings_async(ensure=True)
@@ -215,7 +225,7 @@ async def update_settings(settings_update: SettingsUpdate):
 
 
 @router.post("/reset")
-async def reset_settings():
+async def reset_settings(settings_repo: SettingsRepoDep):
     """Reset settings to defaults."""
     try:
         db_settings = await settings_repo.reset_settings_async()
@@ -229,7 +239,7 @@ async def reset_settings():
 
 
 @router.post("/test-webhook")
-async def test_webhook():
+async def test_webhook(settings_repo: SettingsRepoDep):
     """Test webhook configuration by sending a test notification."""
     try:
         import httpx

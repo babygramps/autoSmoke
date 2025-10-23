@@ -1,13 +1,16 @@
 """Alerts API endpoints."""
 
 from datetime import datetime
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from typing import Annotated, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import select, and_, desc
 
 from db.models import Alert
 from db.session import get_session_sync
-from core.alerts import alert_manager
+from core.alerts import AlertManager
+from core.container import get_alert_manager
+
+AlertManagerDep = Annotated[AlertManager, Depends(get_alert_manager)]
 
 router = APIRouter()
 
@@ -51,7 +54,7 @@ async def get_alerts(
 
 
 @router.get("/summary")
-async def get_alert_summary():
+async def get_alert_summary(alert_manager: AlertManagerDep):
     """Get alert summary statistics."""
     try:
         summary = await alert_manager.get_alert_summary()
@@ -61,7 +64,7 @@ async def get_alert_summary():
 
 
 @router.post("/{alert_id}/ack")
-async def acknowledge_alert(alert_id: int):
+async def acknowledge_alert(alert_id: int, alert_manager: AlertManagerDep):
     """Acknowledge an alert."""
     try:
         success = await alert_manager.acknowledge_alert(alert_id)
@@ -77,7 +80,7 @@ async def acknowledge_alert(alert_id: int):
 
 
 @router.post("/{alert_id}/clear")
-async def clear_alert(alert_id: int):
+async def clear_alert(alert_id: int, alert_manager: AlertManagerDep):
     """Manually clear an alert."""
     try:
         success = await alert_manager.clear_alert(alert_id)
@@ -93,7 +96,7 @@ async def clear_alert(alert_id: int):
 
 
 @router.post("/clear-all")
-async def clear_all_alerts():
+async def clear_all_alerts(alert_manager: AlertManagerDep):
     """Clear all active alerts."""
     try:
         with get_session_sync() as session:

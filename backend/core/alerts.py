@@ -516,6 +516,3 @@ class AlertManager:
         """Cleanup resources."""
         await self.webhook_client.aclose()
 
-
-# Global alert manager instance
-alert_manager = AlertManager()

@@ -2,6 +2,7 @@
 
 import pytest
 import asyncio
+from core.container import ServiceContainer
 from core.hardware import SimTempSensor, SimRelayDriver
 
 
@@ -55,14 +56,14 @@ class TestSimulationMode:
     @pytest.mark.asyncio
     async def test_sim_integration(self):
         """Test simulation mode integration."""
-        from core.controller import SmokerController
         from core.config import settings
-        
+
         # Mock settings to enable sim mode
         with pytest.MonkeyPatch().context() as m:
             m.setattr(settings, 'smoker_sim_mode', True)
-            
-            controller = SmokerController()
+
+            container = ServiceContainer.build()
+            controller = container.controller
             
             # Should be using simulation components
             assert isinstance(controller.temp_sensor, SimTempSensor)

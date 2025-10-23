@@ -1,13 +1,19 @@
 """Control API endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Annotated, Optional
 
-from core.controller import controller, settings_repo
-from core.alerts import alert_manager
+from core.alerts import AlertManager
+from core.container import get_alert_manager, get_controller, get_settings_repository
+from core.controller import SmokerController
 from core.config import settings
 from core.pid_autotune import TuningRule
+from db.repositories import SettingsRepository
+
+ControllerDep = Annotated[SmokerController, Depends(get_controller)]
+AlertManagerDep = Annotated[AlertManager, Depends(get_alert_manager)]
+SettingsRepoDep = Annotated[SettingsRepository, Depends(get_settings_repository)]
 
 router = APIRouter()
 
@@ -39,7 +45,7 @@ class AutoTuneRequest(BaseModel):
 
 
 @router.post("/start")
-async def start_controller():
+async def start_controller(controller: ControllerDep):
     """Start the smoker controller."""
     try:
         await controller.start()
@@ -49,7 +55,7 @@ async def start_controller():
 
 
 @router.post("/stop")
-async def stop_controller():
+async def stop_controller(controller: ControllerDep):
     """Stop the smoker controller."""
     try:
         await controller.stop()
@@ -59,7 +65,10 @@ async def stop_controller():
 
 
 @router.get("/status")
-async def get_status():
+async def get_status(
+    controller: ControllerDep,
+    alert_manager: AlertManagerDep,
+):
     """Get current controller status."""
     try:
         status = controller.get_status()
@@ -71,7 +80,11 @@ async def get_status():
 
 
 @router.post("/setpoint")
-async def set_setpoint(request: SetpointRequest):
+async def set_setpoint(
+    request: SetpointRequest,
+    controller: ControllerDep,
+    settings_repo: SettingsRepoDep,
+):
     """Set temperature setpoint."""
     try:
         if request.units.upper() not in ["F", "C"]:
@@ -101,7 +114,10 @@ async def set_setpoint(request: SetpointRequest):
 
 
 @router.post("/pid")
-async def set_pid_gains(request: PIDGainsRequest):
+async def set_pid_gains(
+    request: PIDGainsRequest,
+    controller: ControllerDep,
+):
     """Update PID gains and timing parameters."""
     try:
         # Validate parameters
@@ -134,7 +150,10 @@ async def set_pid_gains(request: PIDGainsRequest):
 
 
 @router.post("/boost")
-async def enable_boost(request: BoostRequest):
+async def enable_boost(
+    request: BoostRequest,
+    controller: ControllerDep,
+):
     """Enable boost mode."""
     try:
         duration = request.duration_s or settings.smoker_boost_duration_s
@@ -149,7 +168,7 @@ async def enable_boost(request: BoostRequest):
 
 
 @router.delete("/boost")
-async def disable_boost():
+async def disable_boost(controller: ControllerDep):
     """Disable boost mode."""
     try:
         await controller.disable_boost()
@@ -159,7 +178,10 @@ async def disable_boost():
 
 
 @router.post("/autotune/start")
-async def start_autotune(request: AutoTuneRequest):
+async def start_autotune(
+    request: AutoTuneRequest,
+    controller: ControllerDep,
+):
     """
     Start PID auto-tuning process.
     
@@ -224,7 +246,7 @@ async def start_autotune(request: AutoTuneRequest):
 
 
 @router.post("/autotune/cancel")
-async def cancel_autotune():
+async def cancel_autotune(controller: ControllerDep):
     """
     Cancel the auto-tuning process.
     
@@ -248,7 +270,7 @@ async def cancel_autotune():
 
 
 @router.get("/autotune/status")
-async def get_autotune_status():
+async def get_autotune_status(controller: ControllerDep):
     """
     Get current auto-tune status.
     
@@ -276,7 +298,7 @@ async def get_autotune_status():
 
 
 @router.post("/autotune/apply")
-async def apply_autotune_gains():
+async def apply_autotune_gains(controller: ControllerDep):
     """
     Apply the gains calculated by the auto-tuner.
     
@@ -312,7 +334,7 @@ async def apply_autotune_gains():
 
 
 @router.post("/adaptive-pid/enable")
-async def enable_adaptive_pid():
+async def enable_adaptive_pid(controller: ControllerDep):
     """
     Enable continuous adaptive PID tuning.
     
@@ -340,7 +362,7 @@ async def enable_adaptive_pid():
 
 
 @router.post("/adaptive-pid/disable")
-async def disable_adaptive_pid():
+async def disable_adaptive_pid(controller: ControllerDep):
     """
     Disable continuous adaptive PID tuning.
     
@@ -359,7 +381,7 @@ async def disable_adaptive_pid():
 
 
 @router.get("/adaptive-pid/status")
-async def get_adaptive_pid_status():
+async def get_adaptive_pid_status(controller: ControllerDep):
     """
     Get current adaptive PID status.
     
