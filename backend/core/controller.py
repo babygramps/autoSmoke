@@ -1,12 +1,14 @@
 """Main smoker controller with PID loop and relay control."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
 from typing import Optional
 
-from core.config import settings, ControlMode
+from core.config import settings
 from core.control import ThermostatStrategy, TimeProportionalStrategy
 from core.hardware import SimTempSensor
 from core.hardware_service import HardwareService
@@ -15,16 +17,31 @@ from core.pid import PIDController
 from core.pid_autotune import PIDAutoTuner, TuningRule, AutoTuneState
 from core.adaptive_pid import AdaptivePIDController
 from core.alerts import alert_manager
-from db.models import Smoke, Reading, Event, Settings as DBSettings, ThermocoupleReading, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
+from db.models import Smoke, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
+from db.repositories import EventsRepository, ReadingsRepository, SettingsRepository
 from db.session import get_session_sync
 
 logger = logging.getLogger(__name__)
 
 
+settings_repo = SettingsRepository()
+readings_repo = ReadingsRepository()
+events_repo = EventsRepository()
+
+
 class SmokerController:
     """Main smoker controller managing PID loop and relay control."""
     
-    def __init__(self):
+    def __init__(
+        self,
+        settings_repository: SettingsRepository | None = None,
+        readings_repository: ReadingsRepository | None = None,
+        events_repository: EventsRepository | None = None,
+    ):
+        self.settings_repo = settings_repository or settings_repo
+        self.readings_repo = readings_repository or readings_repo
+        self.events_repo = events_repository or events_repo
+
         self.running = False
         self.boost_active = False
         self.boost_until = None
@@ -131,14 +148,12 @@ class SmokerController:
     def _load_db_settings(self):
         """Load settings from database, or return None if not found."""
         try:
-            with get_session_sync() as session:
-                db_settings = session.get(DBSettings, 1)
-                if db_settings:
-                    logger.info("Loaded settings from database")
-                    return db_settings
-                else:
-                    logger.info("No database settings found, using config defaults")
-                    return None
+            db_settings = self.settings_repo.get_settings()
+            if db_settings:
+                logger.info("Loaded settings from database")
+                return db_settings
+            logger.info("No database settings found, using config defaults")
+            return None
         except Exception as e:
             logger.warning(f"Failed to load database settings: {e}. Using config defaults.")
             return None
@@ -178,14 +193,17 @@ class SmokerController:
         # Get current GPIO settings if not provided
         if gpio_pin is None or relay_active_high is None:
             try:
-                with get_session_sync() as session:
-                    db_settings = session.get(DBSettings, 1)
-                    if db_settings:
-                        gpio_pin = gpio_pin if gpio_pin is not None else db_settings.gpio_pin
-                        relay_active_high = relay_active_high if relay_active_high is not None else db_settings.relay_active_high
-                    else:
-                        gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
-                        relay_active_high = relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
+                db_settings = self.settings_repo.get_settings()
+                if db_settings:
+                    gpio_pin = gpio_pin if gpio_pin is not None else db_settings.gpio_pin
+                    relay_active_high = (
+                        relay_active_high if relay_active_high is not None else db_settings.relay_active_high
+                    )
+                else:
+                    gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
+                    relay_active_high = (
+                        relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
+                    )
             except Exception as e:
                 logger.error(f"Failed to load GPIO settings: {e}")
                 gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
@@ -214,14 +232,17 @@ class SmokerController:
         # Get current settings if not provided
         if gpio_pin is None or relay_active_high is None:
             try:
-                with get_session_sync() as session:
-                    db_settings = session.get(DBSettings, 1)
-                    if db_settings:
-                        gpio_pin = gpio_pin if gpio_pin is not None else db_settings.gpio_pin
-                        relay_active_high = relay_active_high if relay_active_high is not None else db_settings.relay_active_high
-                    else:
-                        gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
-                        relay_active_high = relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
+                db_settings = self.settings_repo.get_settings()
+                if db_settings:
+                    gpio_pin = gpio_pin if gpio_pin is not None else db_settings.gpio_pin
+                    relay_active_high = (
+                        relay_active_high if relay_active_high is not None else db_settings.relay_active_high
+                    )
+                else:
+                    gpio_pin = gpio_pin if gpio_pin is not None else settings.smoker_gpio_pin
+                    relay_active_high = (
+                        relay_active_high if relay_active_high is not None else settings.smoker_relay_active_high
+                    )
             except Exception as e:
                 logger.error(f"Failed to load GPIO settings: {e}")
                 return False
@@ -267,17 +288,21 @@ class SmokerController:
         
         # Reload GPIO settings from database before starting
         try:
-            with get_session_sync() as session:
-                db_settings = session.get(DBSettings, 1)
-                if db_settings:
-                    # Check if GPIO settings in database differ from what's currently configured
-                    current_pin = getattr(self.relay_driver, 'pin', None)
-                    current_active_high = getattr(self.relay_driver, 'active_high', None)
-                    
-                    if (current_pin is not None and current_pin != db_settings.gpio_pin) or \
-                       (current_active_high is not None and current_active_high != db_settings.relay_active_high):
-                        logger.info(f"Detected GPIO settings mismatch, reloading: DB has pin={db_settings.gpio_pin}, active_high={db_settings.relay_active_high}")
-                        self.update_relay_settings(db_settings.gpio_pin, db_settings.relay_active_high)
+            db_settings = self.settings_repo.get_settings()
+            if db_settings:
+                # Check if GPIO settings in database differ from what's currently configured
+                current_pin = getattr(self.relay_driver, 'pin', None)
+                current_active_high = getattr(self.relay_driver, 'active_high', None)
+
+                if (current_pin is not None and current_pin != db_settings.gpio_pin) or (
+                    current_active_high is not None and current_active_high != db_settings.relay_active_high
+                ):
+                    logger.info(
+                        "Detected GPIO settings mismatch, reloading: DB has pin=%s, active_high=%s",
+                        db_settings.gpio_pin,
+                        db_settings.relay_active_high,
+                    )
+                    self.update_relay_settings(db_settings.gpio_pin, db_settings.relay_active_high)
         except Exception as e:
             logger.warning(f"Failed to check GPIO settings on start: {e}")
         
@@ -388,15 +413,14 @@ class SmokerController:
             if mode == CONTROL_MODE_TIME_PROPORTIONAL:
                 # Check if user wants adaptive PID enabled
                 try:
-                    with get_session_sync() as session:
-                        db_settings = session.get(DBSettings, 1)
-                        if db_settings and db_settings.adaptive_pid_enabled:
-                            self.adaptive_pid.enable()
-                            logger.info("Adaptive PID enabled (switched to PID mode)")
-                        else:
-                            # Default to enabled if no preference
-                            self.adaptive_pid.enable()
-                            logger.info("Adaptive PID enabled by default (switched to PID mode)")
+                    db_settings = self.settings_repo.get_settings()
+                    if db_settings and db_settings.adaptive_pid_enabled:
+                        self.adaptive_pid.enable()
+                        logger.info("Adaptive PID enabled (switched to PID mode)")
+                    else:
+                        # Default to enabled if no preference
+                        self.adaptive_pid.enable()
+                        logger.info("Adaptive PID enabled by default (switched to PID mode)")
                 except Exception as e:
                     logger.error(f"Failed to load adaptive PID setting: {e}")
                     self.adaptive_pid.enable()  # Default to enabled on error
@@ -414,14 +438,7 @@ class SmokerController:
         await self.set_pid_gains(kp, ki, kd)
 
         try:
-            with get_session_sync() as session:
-                db_settings = session.get(DBSettings, 1)
-                if db_settings:
-                    db_settings.kp = kp
-                    db_settings.ki = ki
-                    db_settings.kd = kd
-                    session.add(db_settings)
-                    session.commit()
+            self.settings_repo.set_pid_gains(kp, ki, kd)
         except Exception as exc:
             logger.error(f"Failed to save adaptive PID gains: {exc}")
 
@@ -558,18 +575,13 @@ class SmokerController:
         
         # Save to database
         try:
-            with get_session_sync() as session:
-                db_settings = session.get(DBSettings, 1)
-                if db_settings:
-                    db_settings.kp = kp
-                    db_settings.ki = ki
-                    db_settings.kd = kd
-                    session.add(db_settings)
-                    session.commit()
-                    logger.info(f"Auto-tuned gains saved to database: Kp={kp:.4f}, Ki={ki:.4f}, Kd={kd:.4f}")
-                else:
-                    logger.error("No database settings found to save gains")
-                    return False
+            self.settings_repo.set_pid_gains(kp, ki, kd)
+            logger.info(
+                "Auto-tuned gains saved to database: Kp=%s, Ki=%s, Kd=%s",
+                f"{kp:.4f}",
+                f"{ki:.4f}",
+                f"{kd:.4f}",
+            )
         except Exception as e:
             logger.error(f"Failed to save auto-tuned gains to database: {e}")
             return False
@@ -611,16 +623,14 @@ class SmokerController:
         
         # Save to database
         try:
-            with get_session_sync() as session:
-                db_settings = session.get(DBSettings, 1)
-                if db_settings:
-                    logger.info(f"💾 Saving adaptive_pid_enabled=True to database (was: {db_settings.adaptive_pid_enabled})")
-                    db_settings.adaptive_pid_enabled = True
-                    session.add(db_settings)
-                    session.commit()
-                    logger.info("✅ Database updated successfully")
-                else:
-                    logger.error("❌ No database settings found!")
+            current = self.settings_repo.get_settings(ensure=True)
+            previous = current.adaptive_pid_enabled if current else None
+            self.settings_repo.set_adaptive_pid_enabled(True)
+            logger.info(
+                "💾 Saving adaptive_pid_enabled=True to database (was: %s)",
+                previous,
+            )
+            logger.info("✅ Database updated successfully")
         except Exception as e:
             logger.error(f"❌ Failed to save adaptive PID enabled state: {e}")
         
@@ -635,16 +645,14 @@ class SmokerController:
         
         # Save to database
         try:
-            with get_session_sync() as session:
-                db_settings = session.get(DBSettings, 1)
-                if db_settings:
-                    logger.info(f"💾 Saving adaptive_pid_enabled=False to database (was: {db_settings.adaptive_pid_enabled})")
-                    db_settings.adaptive_pid_enabled = False
-                    session.add(db_settings)
-                    session.commit()
-                    logger.info("✅ Database updated successfully")
-                else:
-                    logger.error("❌ No database settings found!")
+            current = self.settings_repo.get_settings(ensure=True)
+            previous = current.adaptive_pid_enabled if current else None
+            self.settings_repo.set_adaptive_pid_enabled(False)
+            logger.info(
+                "💾 Saving adaptive_pid_enabled=False to database (was: %s)",
+                previous,
+            )
+            logger.info("✅ Database updated successfully")
         except Exception as e:
             logger.error(f"❌ Failed to save adaptive PID disabled state: {e}")
         
@@ -862,51 +870,38 @@ class SmokerController:
     async def _log_reading(self):
         """Log current reading to database."""
         try:
-            with get_session_sync() as session:
-                reading = Reading(
-                    smoke_id=self.active_smoke_id,
-                    temp_c=self.current_temp_c,
-                    temp_f=self.current_temp_f,
-                    setpoint_c=self.setpoint_c,
-                    setpoint_f=self.setpoint_f,
-                    output_bool=self.output_bool,
-                    relay_state=self.relay_state,
-                    loop_ms=int(self.last_loop_time * 1000) if self.last_loop_time else 0,
-                    pid_output=self.pid_output,
-                    boost_active=self.boost_active
-                )
-                session.add(reading)
-                session.commit()
-                session.refresh(reading)  # Get the ID
-                
-                # Log all thermocouple readings
-                for tc_id, (temp_c, fault) in self.tc_readings.items():
-                    if temp_c is not None:
-                        temp_f = settings.celsius_to_fahrenheit(temp_c)
-                        tc_reading = ThermocoupleReading(
-                            reading_id=reading.id,
-                            thermocouple_id=tc_id,
-                            temp_c=temp_c,
-                            temp_f=temp_f,
-                            fault=fault
-                        )
-                        session.add(tc_reading)
-                
-                session.commit()
+            reading_data = {
+                "smoke_id": self.active_smoke_id,
+                "temp_c": self.current_temp_c,
+                "temp_f": self.current_temp_f,
+                "setpoint_c": self.setpoint_c,
+                "setpoint_f": self.setpoint_f,
+                "output_bool": self.output_bool,
+                "relay_state": self.relay_state,
+                "loop_ms": int(self.last_loop_time * 1000) if self.last_loop_time else 0,
+                "pid_output": self.pid_output,
+                "boost_active": self.boost_active,
+            }
+
+            tc_samples = []
+            for tc_id, (temp_c, fault) in self.tc_readings.items():
+                if temp_c is None:
+                    continue
+                tc_samples.append({
+                    "thermocouple_id": tc_id,
+                    "temp_c": temp_c,
+                    "temp_f": settings.celsius_to_fahrenheit(temp_c),
+                    "fault": fault,
+                })
+
+            await self.readings_repo.create_reading_async(reading_data, tc_samples)
         except Exception as e:
             logger.error(f"Failed to log reading: {e}")
-    
+
     async def _log_event(self, kind: str, message: str, meta_json: str = None):
         """Log system event to database."""
         try:
-            with get_session_sync() as session:
-                event = Event(
-                    kind=kind,
-                    message=message,
-                    meta_json=meta_json
-                )
-                session.add(event)
-                session.commit()
+            await self.events_repo.log_event_async(kind, message, meta_json)
         except Exception as e:
             logger.error(f"Failed to log event: {e}")
     
