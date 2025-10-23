@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.config import settings
+from core.container import initialise_services
 from db.session import create_db_and_tables
 
 
@@ -36,15 +37,14 @@ async def lifespan(app: FastAPI):
     from api.routers.recipes import seed_default_recipes
     seed_default_recipes()
     
-    # Start WebSocket broadcasting
-    from ws.manager import start_websocket_broadcasting
-    await start_websocket_broadcasting()
-    
+    # Initialise application services
+    container = initialise_services(app)
+    await container.startup()
+
     yield
-    
+
     # Shutdown
-    from ws.manager import stop_websocket_broadcasting
-    await stop_websocket_broadcasting()
+    await container.shutdown()
 
 
 # Create FastAPI app

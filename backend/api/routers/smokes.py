@@ -2,18 +2,22 @@
 
 import json
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Annotated, Optional, List, Dict, Any
 from datetime import datetime
 
 from db.models import Smoke, SmokePhase, CookingRecipe
 from db.session import get_session_sync
-from core.controller import controller
+from core.app_state import get_service_container
+from core.container import get_controller
+from core.controller import SmokerController
 from core.phase_manager import phase_manager
 from sqlmodel import select
 
 logger = logging.getLogger(__name__)
+
+ControllerDep = Annotated[SmokerController, Depends(get_controller)]
 
 router = APIRouter()
 
@@ -130,7 +134,10 @@ async def get_smoke(smoke_id: int):
 
 
 @router.post("")
-async def create_smoke(smoke_create: SmokeCreate):
+async def create_smoke(
+    smoke_create: SmokeCreate,
+    controller: ControllerDep,
+):
     """Create a new smoke session with recipe and phases."""
     try:
         with get_session_sync() as session:
@@ -281,7 +288,11 @@ async def create_smoke(smoke_create: SmokeCreate):
 
 
 @router.put("/{smoke_id}")
-async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
+async def update_smoke(
+    smoke_id: int,
+    smoke_update: SmokeUpdate,
+    controller: ControllerDep,
+):
     """Update a smoke session and its phase configurations."""
     try:
         with get_session_sync() as session:
@@ -455,7 +466,6 @@ async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
                     if smoke.current_phase_id:
                         current_phase = session.get(SmokePhase, smoke.current_phase_id)
                         if current_phase and current_phase.is_active:
-                            from core.controller import controller
                             await controller.set_setpoint(current_phase.target_temp_f)
                             logger.info(f"Updated controller setpoint to {current_phase.target_temp_f}°F for active phase")
             
@@ -514,7 +524,7 @@ async def update_smoke(smoke_id: int, smoke_update: SmokeUpdate):
 
 
 @router.post("/{smoke_id}/activate")
-async def activate_smoke(smoke_id: int):
+async def activate_smoke(smoke_id: int, controller: ControllerDep):
     """Set a smoke session as active."""
     try:
         with get_session_sync() as session:
@@ -550,7 +560,7 @@ async def activate_smoke(smoke_id: int):
 
 
 @router.post("/{smoke_id}/end")
-async def end_smoke(smoke_id: int):
+async def end_smoke(smoke_id: int, controller: ControllerDep):
     """End a smoke session."""
     try:
         with get_session_sync() as session:
@@ -687,7 +697,11 @@ async def get_smoke_phases(smoke_id: int):
 
 
 @router.post("/{smoke_id}/approve-phase-transition")
-async def approve_phase_transition(smoke_id: int):
+async def approve_phase_transition(
+    smoke_id: int,
+    controller: ControllerDep,
+    request: Request,
+):
     """User approves moving to next phase."""
     try:
         success, error_msg = phase_manager.approve_phase_transition(smoke_id)
@@ -703,7 +717,7 @@ async def approve_phase_transition(smoke_id: int):
             
             # Broadcast phase started event
             try:
-                from ws.manager import manager as ws_manager
+                ws_manager = get_service_container(request.app).connection_manager
                 await ws_manager.broadcast_phase_event("phase_started", {
                     "smoke_id": smoke_id,
                     "phase": {
@@ -733,7 +747,12 @@ async def approve_phase_transition(smoke_id: int):
 
 
 @router.put("/{smoke_id}/phases/{phase_id}")
-async def update_phase(smoke_id: int, phase_id: int, phase_update: PhaseUpdate):
+async def update_phase(
+    smoke_id: int,
+    phase_id: int,
+    phase_update: PhaseUpdate,
+    controller: ControllerDep,
+):
     """Edit phase parameters during session."""
     try:
         with get_session_sync() as session:
@@ -776,7 +795,7 @@ async def update_phase(smoke_id: int, phase_id: int, phase_update: PhaseUpdate):
 
 
 @router.post("/{smoke_id}/skip-phase")
-async def skip_phase(smoke_id: int):
+async def skip_phase(smoke_id: int, controller: ControllerDep):
     """Skip current phase and move to next."""
     try:
         with get_session_sync() as session:
@@ -878,7 +897,7 @@ async def resume_phase(smoke_id: int):
 
 
 @router.get("/{smoke_id}/phase-progress")
-async def get_phase_progress(smoke_id: int):
+async def get_phase_progress(smoke_id: int, controller: ControllerDep):
     """Get progress information for current phase."""
     try:
         with get_session_sync() as session:

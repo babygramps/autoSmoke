@@ -16,17 +16,12 @@ from core.session_service import SessionService
 from core.pid import PIDController
 from core.pid_autotune import PIDAutoTuner, TuningRule, AutoTuneState
 from core.adaptive_pid import AdaptivePIDController
-from core.alerts import alert_manager
+from core.alerts import AlertManager
 from db.models import Smoke, CONTROL_MODE_THERMOSTAT, CONTROL_MODE_TIME_PROPORTIONAL
 from db.repositories import EventsRepository, ReadingsRepository, SettingsRepository
 from db.session import get_session_sync
 
 logger = logging.getLogger(__name__)
-
-
-settings_repo = SettingsRepository()
-readings_repo = ReadingsRepository()
-events_repo = EventsRepository()
 
 
 class SmokerController:
@@ -37,10 +32,12 @@ class SmokerController:
         settings_repository: SettingsRepository | None = None,
         readings_repository: ReadingsRepository | None = None,
         events_repository: EventsRepository | None = None,
+        alert_manager: AlertManager | None = None,
     ):
-        self.settings_repo = settings_repository or settings_repo
-        self.readings_repo = readings_repository or readings_repo
-        self.events_repo = events_repository or events_repo
+        self.settings_repo = settings_repository or SettingsRepository()
+        self.readings_repo = readings_repository or ReadingsRepository()
+        self.events_repo = events_repository or EventsRepository()
+        self.alert_manager = alert_manager or AlertManager()
 
         self.running = False
         self.boost_active = False
@@ -774,7 +771,7 @@ class SmokerController:
         # This prevents duplicate logging when controller is running
         
         # Check alerts
-        await alert_manager.check_alerts(self.get_status())
+        await self.alert_manager.check_alerts(self.get_status())
     
     async def _autotune_control(self, temp_c: float):
         """
@@ -966,6 +963,3 @@ class SmokerController:
             "adaptive_pid": self.get_adaptive_pid_status()
         }
 
-
-# Global controller instance
-controller = SmokerController()

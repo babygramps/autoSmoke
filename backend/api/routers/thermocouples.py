@@ -1,13 +1,16 @@
 """Thermocouple API endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Annotated, Optional, List
 from datetime import datetime
 
 from db.models import Thermocouple
 from db.session import get_session_sync
-from core.controller import controller
+from core.container import get_controller
+from core.controller import SmokerController
+
+ControllerDep = Annotated[SmokerController, Depends(get_controller)]
 
 router = APIRouter()
 
@@ -61,7 +64,7 @@ async def get_thermocouples():
 
 
 @router.get("/filtering-stats")
-async def get_filtering_stats():
+async def get_filtering_stats(controller: ControllerDep):
     """
     Get filtering statistics for all thermocouples.
     Shows how many outliers have been rejected and faults detected.
@@ -149,7 +152,10 @@ async def get_thermocouple(thermocouple_id: int):
 
 
 @router.post("")
-async def create_thermocouple(tc_create: ThermocoupleCreate):
+async def create_thermocouple(
+    tc_create: ThermocoupleCreate,
+    controller: ControllerDep,
+):
     """Create a new thermocouple."""
     try:
         with get_session_sync() as session:
@@ -195,7 +201,11 @@ async def create_thermocouple(tc_create: ThermocoupleCreate):
 
 
 @router.put("/{thermocouple_id}")
-async def update_thermocouple(thermocouple_id: int, tc_update: ThermocoupleUpdate):
+async def update_thermocouple(
+    thermocouple_id: int,
+    tc_update: ThermocoupleUpdate,
+    controller: ControllerDep,
+):
     """Update a thermocouple."""
     try:
         with get_session_sync() as session:
@@ -245,7 +255,10 @@ async def update_thermocouple(thermocouple_id: int, tc_update: ThermocoupleUpdat
 
 
 @router.post("/{thermocouple_id}/set_control")
-async def set_control_thermocouple(thermocouple_id: int):
+async def set_control_thermocouple(
+    thermocouple_id: int,
+    controller: ControllerDep,
+):
     """Set a thermocouple as the control thermocouple."""
     try:
         with get_session_sync() as session:
@@ -290,7 +303,10 @@ async def set_control_thermocouple(thermocouple_id: int):
 
 
 @router.delete("/{thermocouple_id}")
-async def delete_thermocouple(thermocouple_id: int):
+async def delete_thermocouple(
+    thermocouple_id: int,
+    controller: ControllerDep,
+):
     """Delete a thermocouple."""
     try:
         with get_session_sync() as session:

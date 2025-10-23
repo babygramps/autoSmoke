@@ -311,6 +311,22 @@ Set `SMOKER_SIM_MODE=true` in your environment to run without hardware:
 - Logs relay state changes instead of controlling GPIO
 - Perfect for development and testing
 
+### Backend service container
+
+The FastAPI application now bootstraps all long-lived backend services through
+`backend/core/container.py`. The `ServiceContainer` class wires together the
+database repositories, `SmokerController`, alert manager, and WebSocket
+`ConnectionManager` during the application's `lifespan` event. Each router
+requests these collaborators via FastAPI dependencies such as
+`Depends(get_controller)` or `Depends(get_settings_repository)` instead of
+importing module-level singletons.
+
+When adding new endpoints you should rely on the dependency helpers from
+`core.container` rather than instantiating services directly. Tests can build an
+isolated container with `ServiceContainer.build()` (see
+`backend/tests/conftest.py`) to override components or use simulated hardware
+without touching production wiring.
+
 ### Testing
 
 Run the test suite:

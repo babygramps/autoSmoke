@@ -3,7 +3,6 @@
 import pytest
 import asyncio
 from unittest.mock import Mock, AsyncMock
-from core.controller import SmokerController
 from core.hardware import SimTempSensor, SimRelayDriver
 
 
@@ -11,10 +10,10 @@ class TestSmokerController:
     """Test smoker controller functionality."""
     
     @pytest.fixture
-    def controller(self):
+    def controller(self, service_container):
         """Create a controller instance for testing."""
         # Mock the hardware components
-        controller = SmokerController()
+        controller = service_container.controller
         controller.temp_sensor = SimTempSensor()
         controller.relay_driver = SimRelayDriver()
         return controller
